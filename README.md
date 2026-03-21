@@ -1,4 +1,4 @@
-# 🤖 Rikka Bot - Bot de Telegram para Procesamiento de Videos
+# 🤖 ZeroTwo Bot - Bot de Telegram para Procesamiento de Videos
 
 Bot de Telegram avanzado para procesamiento de videos, descargas y búsqueda de anime. Desarrollado con Pyrogram (MTProto) para soportar archivos de **cualquier tamaño** sin límites.
 
