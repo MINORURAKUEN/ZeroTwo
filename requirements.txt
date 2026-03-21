@@ -1,0 +1,18 @@
+# Rikka Bot - Dependencias Python
+
+# Pyrogram - Cliente de Telegram MTProto
+pyrogram>=2.0.0
+
+# TgCrypto - Aceleración de cifrado para Pyrogram
+tgcrypto
+
+# Nota: Las siguientes herramientas se instalan vía sistema operativo
+# 
+# En Termux (Android):
+#   pkg install python ffmpeg megatools wget curl aria2
+#
+# En Ubuntu/Debian:
+#   apt install python3 python3-pip ffmpeg megatools wget curl aria2
+#
+# En macOS:
+#   brew install python ffmpeg megatools wget curl aria2
