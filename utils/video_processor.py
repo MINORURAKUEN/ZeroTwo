@@ -47,9 +47,9 @@ class VideoProcessor:
     @staticmethod
     def compress_video_resolution(input_path, output_path, scale='640:360', bitrate='800k', crf='25', preset='veryfast'):
         """
-        Versión robusta para Termux. Asegura la creación del archivo.
+        Versión final corregida para Termux. Usa '-x' para las opciones del codificador.
         """
-        logger.info(f"⚙️ Intentando compresión 360p: {input_path}")
+        logger.info(f"⚙️ Intentando compresión 360p (HandBrake): {input_path}")
         
         try:
             width, height = scale.split(':')
@@ -57,14 +57,17 @@ class VideoProcessor:
         except:
             width, height = '640', '360'
 
+        # Cambiamos --x264-opts por -x (que es el alias universal)
+        # y eliminamos el prefijo 'preset=' si causa problemas, 
+        # aunque aquí lo dejamos como cadena de opciones.
         cmd = [
             'HandBrakeCLI',
             '-i', str(input_path),
             '-o', str(output_path),
-            '--format', 'av_mp4',      # Forzar contenedor MP4
+            '--format', 'av_mp4',
             '-e', 'x264',
             '-q', str(crf),
-            '--x264-opts', 'preset=veryfast:fast-pskip=1:threads=auto',
+            '-x', 'preset=veryfast:threads=auto', # -x es más compatible que --x264-opts
             '-w', width,
             '-l', height,
             '--keep-display-aspect',
@@ -72,24 +75,35 @@ class VideoProcessor:
             '-E', 'av_aac',
             '-B', '128',
             '--mixdown', 'stereo',
-            '--optimize'               # Fast start para Telegram
+            '--optimize'
         ]
 
         try:
-            # Ejecución con captura de errores mejorada
             process = subprocess.run(cmd, capture_output=True, text=True)
             
-            # VERIFICACIÓN CRÍTICA: ¿Existe el archivo de salida?
             if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                logger.info(f"✅ Archivo creado exitosamente: {output_path}")
+                logger.info(f"✅ Compresión exitosa: {output_path}")
                 return True
             else:
-                logger.error(f"❌ HandBrake terminó pero el archivo no existe o está vacío.")
-                logger.error(f"HandBrake Stderr: {process.stderr}")
-                return False
+                logger.error(f"❌ Error en HandBrake. Stderr: {process.stderr}")
+                # Si -x también falla, intentamos una versión ultra-simple sin opciones extra
+                return VideoProcessor._compress_fallback(input_path, output_path, width, height, crf)
         except Exception as e:
-            logger.error(f"❌ Error fatal en subprocess HandBrake: {e}")
+            logger.error(f"❌ Error fatal: {e}")
             return False
+
+    @staticmethod
+    def _compress_fallback(input_path, output_path, width, height, crf):
+        """Intento de emergencia con el comando más básico posible."""
+        logger.warning("⚠️ Usando modo fallback de HandBrake...")
+        cmd = [
+            'HandBrakeCLI', '-i', str(input_path), '-o', str(output_path),
+            '-w', width, '-l', height, '-e', 'x264', '-q', str(crf), '--optimize'
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True)
+            return os.path.exists(output_path) and os.path.getsize(output_path) > 0
+        except: return False
 
     @staticmethod
     def burn_subtitles(video_path, output_path, audio_idx=None, sub_idx=None, is_external=False, external_sub_path=None):
