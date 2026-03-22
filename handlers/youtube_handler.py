@@ -1,6 +1,6 @@
 """
 youtube_handler.py - Manejador de descargas de YouTube
-Usa API de APICausas similar al código de referencia
+Corregido: Manejo robusto de reacciones para evitar REACTION_INVALID
 """
 
 import json
@@ -13,6 +13,13 @@ from pyrogram.types import Message
 
 logger = logging.getLogger(__name__)
 
+async def safe_react(message: Message, emoji: str):
+    """Envía una reacción de forma segura sin romper el flujo si falla"""
+    try:
+        await message.react(emoji)
+    except Exception:
+        # Si falla la reacción (emoji inválido o permisos), solo logueamos y seguimos
+        logger.warning(f"No se pudo reaccionar con {emoji}")
 
 def register(app, download_dir):
     """Registra el handler de YouTube"""
@@ -142,8 +149,8 @@ def register(app, download_dir):
             else:
                 await status_msg.edit_text(caption_info, parse_mode=enums.ParseMode.HTML)
             
-            # Reaccionar con reloj
-            await message.react("⏳")
+            # Reaccionar de forma segura
+            await safe_react(message, "⚡")
             
             # ==========================================
             # DESCARGAR USANDO API DE APICAUSAS
@@ -188,11 +195,9 @@ def register(app, download_dir):
             if is_video:
                 # ========== ENVIAR COMO VIDEO ==========
                 logger.info("📹 Descargando y enviando video...")
-                
-                tmp_video = download_dir / f"yt_{message.from_user.id}.mp4"
+                tmp_video = download_dir / f"yt_{message.from_user.id}_{message.id}.mp4"
                 
                 try:
-                    # Descargar video
                     dl_cmd = f'curl -s -L -o "{tmp_video}" "{download_url}"'
                     subprocess.run(dl_cmd, shell=True, timeout=180)
                     
@@ -205,93 +210,62 @@ def register(app, download_dir):
                         parse_mode=enums.ParseMode.HTML,
                         supports_streaming=True
                     )
-                    
-                    logger.info("✅ Video enviado")
-                    
                 finally:
                     tmp_video.unlink(missing_ok=True)
                 
             elif is_voice_note:
                 # ========== ENVIAR COMO NOTA DE VOZ ==========
                 logger.info("🎤 Convirtiendo a nota de voz...")
-                
-                tmp_mp3 = download_dir / f"tmp_{message.from_user.id}.mp3"
-                tmp_ogg = download_dir / f"tmp_{message.from_user.id}.ogg"
+                tmp_mp3 = download_dir / f"tmp_{message.from_user.id}_{message.id}.mp3"
+                tmp_ogg = download_dir / f"tmp_{message.from_user.id}_{message.id}.ogg"
                 
                 try:
-                    # Descargar audio
                     dl_cmd = f'curl -s -L -o "{tmp_mp3}" "{download_url}"'
                     subprocess.run(dl_cmd, shell=True, timeout=120)
                     
-                    if not tmp_mp3.exists():
-                        raise Exception("Error descargando audio")
-                    
-                    # Convertir a formato OPUS para WhatsApp/Telegram
                     convert_cmd = [
                         'ffmpeg', '-i', str(tmp_mp3),
-                        '-c:a', 'libopus',
-                        '-b:a', '48k',
-                        '-vbr', 'on',
-                        '-compression_level', '10',
-                        '-frame_duration', '60',
-                        '-application', 'voip',
-                        '-y',
-                        str(tmp_ogg)
+                        '-c:a', 'libopus', '-b:a', '48k',
+                        '-vbr', 'on', '-compression_level', '10',
+                        '-application', 'voip', '-y', str(tmp_ogg)
                     ]
-                    
                     subprocess.run(convert_cmd, capture_output=True, timeout=60)
                     
                     if not tmp_ogg.exists():
                         raise Exception("Error convirtiendo a nota de voz")
                     
-                    # Enviar como nota de voz
-                    await message.reply_voice(
-                        voice=str(tmp_ogg)
-                    )
-                    
-                    logger.info("✅ Nota de voz enviada")
-                    
+                    await message.reply_voice(voice=str(tmp_ogg))
                 finally:
-                    # Limpiar archivos temporales
                     tmp_mp3.unlink(missing_ok=True)
                     tmp_ogg.unlink(missing_ok=True)
-                    logger.info("🗑️ Archivos temporales eliminados")
                     
             else:
                 # ========== ENVIAR COMO AUDIO NORMAL ==========
                 logger.info("🎵 Descargando y enviando audio...")
-                
-                tmp_audio = download_dir / f"yt_{message.from_user.id}.mp3"
+                tmp_audio = download_dir / f"yt_{message.from_user.id}_{message.id}.mp3"
                 
                 try:
-                    # Descargar audio
                     dl_cmd = f'curl -s -L -o "{tmp_audio}" "{download_url}"'
                     subprocess.run(dl_cmd, shell=True, timeout=120)
-                    
-                    if not tmp_audio.exists():
-                        raise Exception("Error descargando audio")
                     
                     await message.reply_audio(
                         audio=str(tmp_audio),
                         title=video_title or 'Audio de YouTube',
                         performer=video_channel or 'YouTube'
                     )
-                    
-                    logger.info("✅ Audio enviado")
-                    
                 finally:
                     tmp_audio.unlink(missing_ok=True)
             
-            # Reaccionar con check
-            await message.react("✅")
-            logger.info("✅ Descarga completada exitosamente")
+            # Reaccionar con éxito
+            await safe_react(message, "👍")
             
         except subprocess.TimeoutExpired:
             logger.error("⏱️ Timeout en la operación")
-            await message.react("❌")
+            await safe_react(message, "👎")
             await message.reply_text("⏱️ La operación tardó demasiado. Intenta con un video más corto.")
             
         except Exception as e:
             logger.error(f"❌ Error: {e}", exc_info=True)
-            await message.react("❌")
+            await safe_react(message, "👎")
             await message.reply_text(f"❌ <b>Error:</b> {str(e)}", parse_mode=enums.ParseMode.HTML)
+        
