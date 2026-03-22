@@ -64,6 +64,10 @@ def register(app):
   🔷 MEGA (mega.nz, mega.co.nz)
   🔶 MediaFire (mediafire.com)
 
+<b>🎵 TikTok:</b>
+- /tiktok <url> - Descargar video sin marca de agua
+- Ejemplo: /tt https://vt.tiktok.com/+++++
+
 <b>BÚSQUEDA:</b>
 
 <b>9️⃣ Buscar Anime:</b>
