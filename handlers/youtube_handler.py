@@ -187,14 +187,29 @@ def register(app, download_dir):
             
             if is_video:
                 # ========== ENVIAR COMO VIDEO ==========
-                logger.info("📹 Enviando como video...")
+                logger.info("📹 Descargando y enviando video...")
                 
-                await message.reply_video(
-                    video=download_url,
-                    caption=f"🎬 <b>{video_title}</b>",
-                    parse_mode=enums.ParseMode.HTML,
-                    supports_streaming=True
-                )
+                tmp_video = download_dir / f"yt_{message.from_user.id}.mp4"
+                
+                try:
+                    # Descargar video
+                    dl_cmd = f'curl -s -L -o "{tmp_video}" "{download_url}"'
+                    subprocess.run(dl_cmd, shell=True, timeout=180)
+                    
+                    if not tmp_video.exists():
+                        raise Exception("Error descargando video")
+                    
+                    await message.reply_video(
+                        video=str(tmp_video),
+                        caption=f"🎬 <b>{video_title}</b>",
+                        parse_mode=enums.ParseMode.HTML,
+                        supports_streaming=True
+                    )
+                    
+                    logger.info("✅ Video enviado")
+                    
+                finally:
+                    tmp_video.unlink(missing_ok=True)
                 
             elif is_voice_note:
                 # ========== ENVIAR COMO NOTA DE VOZ ==========
@@ -244,13 +259,28 @@ def register(app, download_dir):
                     
             else:
                 # ========== ENVIAR COMO AUDIO NORMAL ==========
-                logger.info("🎵 Enviando como audio...")
+                logger.info("🎵 Descargando y enviando audio...")
                 
-                await message.reply_audio(
-                    audio=download_url,
-                    title=video_title or 'Audio de YouTube',
-                    performer=video_channel or 'YouTube'
-                )
+                tmp_audio = download_dir / f"yt_{message.from_user.id}.mp3"
+                
+                try:
+                    # Descargar audio
+                    dl_cmd = f'curl -s -L -o "{tmp_audio}" "{download_url}"'
+                    subprocess.run(dl_cmd, shell=True, timeout=120)
+                    
+                    if not tmp_audio.exists():
+                        raise Exception("Error descargando audio")
+                    
+                    await message.reply_audio(
+                        audio=str(tmp_audio),
+                        title=video_title or 'Audio de YouTube',
+                        performer=video_channel or 'YouTube'
+                    )
+                    
+                    logger.info("✅ Audio enviado")
+                    
+                finally:
+                    tmp_audio.unlink(missing_ok=True)
             
             # Reaccionar con check
             await message.react("✅")
