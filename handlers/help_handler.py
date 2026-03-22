@@ -40,25 +40,43 @@ def register(app):
 - Envía el video
 - Recibe el archivo de audio en MP3
 
-<b>DESCARGAS:</b>
+<b>DESCARGAS DE REDES SOCIALES:</b>
 
-<b>5️⃣ Descargar de MEGA/MediaFire:</b>
+<b>5️⃣ YouTube:</b>
+- /play <nombre> - Descargar audio
+- /play2 <nombre> - Descargar video
+- /playaudio <nombre> - Audio como nota de voz
+- /ytmp3 <url> - Audio desde URL
+- /ytmp4 <url> - Video desde URL
+- Ejemplo: /play Linkin Park Numb
+
+<b>6️⃣ Facebook:</b>
+- /fb <url> - Descargar video de Facebook
+- Ejemplo: /fb https://facebook.com/watch/?v=12345
+
+<b>7️⃣ Twitter/X:</b>
+- /x <url> - Descargar video o fotos de Twitter/X
+- Ejemplo: /x https://x.com/user/status/123456789
+
+<b>8️⃣ MEGA/MediaFire:</b>
 - Envía /download o pega directamente el enlace
 - Servicios soportados:
   🔷 MEGA (mega.nz, mega.co.nz)
   🔶 MediaFire (mediafire.com)
-- El bot descargará y te enviará el archivo
 
 <b>BÚSQUEDA:</b>
 
-<b>6️⃣ Buscar Anime:</b>
+<b>9️⃣ Buscar Anime:</b>
 - Envía /anime Nombre del anime
 - Obtén información completa con imagen
 - Ejemplo: /anime One Piece
 
 <b>Ejemplos de enlaces:</b>
-• mega.nz/file/abc123#xyz789
-• mediafire.com/file/abc123/archivo.zip
+• YouTube: youtube.com/watch?v=abc123
+• Facebook: facebook.com/watch/?v=12345
+• Twitter: x.com/user/status/123456789
+• MEGA: mega.nz/file/abc123#xyz789
+• MediaFire: mediafire.com/file/abc123/archivo.zip
 
 <b>Formatos soportados:</b>
 - Descargas: Videos se envían como video reproducible
@@ -72,7 +90,7 @@ def register(app):
 - Archivos procesados: Máx. 2GB para enviar (límite de Telegram)
 - Tiempo de procesamiento: Depende del tamaño
 
-<b>💡 Tip:</b> Ahora puedes enviar videos grandes directamente!
+<b>💡 Tip:</b> Ahora puedes descargar de YouTube, Facebook y Twitter!
 
 ¿Necesitas ayuda? Contáctame con /start"""
         
