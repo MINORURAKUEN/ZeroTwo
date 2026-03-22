@@ -64,7 +64,6 @@ class VideoProcessor:
                     })
                     sub_count += 1
             
-            logger.info(f"✅ Análisis completo: {len(info['audio'])} audios, {len(info['subtitle'])} subs.")
             return info
         except Exception as e:
             logger.error(f"❌ Error en probe_media: {e}")
@@ -73,12 +72,10 @@ class VideoProcessor:
     @staticmethod
     def burn_subtitles(video_path, output_path, audio_idx=None, sub_idx=None, is_external=False, external_sub_path=None):
         """
-        Quema subtítulos y agrega marca de agua 'CID' (Sin cursiva).
-        Estilo: Texto blanco, contorno azul claro.
+        Quema subtítulos y agrega marca de agua 'CID' que desaparece a los 6 segundos.
         """
-        logger.info(f"📝 Iniciando quemado con marca de agua 'CID'")
+        logger.info(f"📝 Iniciando quemado con marca de agua temporal (6s)")
         
-        # Escapado robusto de rutas
         if is_external and external_sub_path:
             sub_p = VideoProcessor._escape_path(external_sub_path)
             sub_filter = f"subtitles={sub_p}"
@@ -86,7 +83,6 @@ class VideoProcessor:
             vid_p = VideoProcessor._escape_path(video_path)
             sub_filter = f"subtitles={vid_p}:si={sub_idx}"
 
-        # Estilo de Subtítulos: Borde Azul Claro. Usamos 'sans' por compatibilidad.
         sub_style = (
             "force_style='"
             "Fontname=sans,FontSize=22,Bold=1,"
@@ -94,12 +90,14 @@ class VideoProcessor:
             "BorderStyle=1,Outline=2.0,Shadow=1.0,MarginV=25'"
         )
 
-        # Marca de Agua: SIN CURSIVA (italic eliminado para FFmpeg 8.1)
+        # Marca de Agua con DESVANECIMIENTO (enable='lt(t,6)')
+        # lt(t,6) significa "menor que 6 segundos"
         watermark = (
             "drawtext="
             "text='CID':x=20:y=20:"
             "font='sans':fontsize=24:"
-            "fontcolor=white:bordercolor=black:borderw=1.5"
+            "fontcolor=white:bordercolor=black:borderw=1.5:"
+            "enable='lt(t,6)'" 
         )
 
         full_vf = f"{watermark},{sub_filter}:{sub_style}"
@@ -109,7 +107,9 @@ class VideoProcessor:
             'ffmpeg', '-y', '-i', str(video_path),
             '-map', '0:v:0', *audio_map,
             '-vf', full_vf,
-            '-c:v', 'libx264', '-crf', '22', '-preset', 'ultrafast',
+            '-c:v', 'libx264', 
+            '-crf', '28',           # Optimizado para peso bajo
+            '-preset', 'veryfast',  # Mejor compresión que ultrafast
             '-c:a', 'aac', '-b:a', '128k',
             '-threads', '0',
             '-movflags', '+faststart',
@@ -157,4 +157,4 @@ class VideoProcessor:
         except Exception as e:
             logger.error(f"❌ Error extrayendo audio: {e}")
             return False
-            
+        
