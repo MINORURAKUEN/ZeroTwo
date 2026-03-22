@@ -22,7 +22,10 @@ def register(app):
 📝 <b>Quemar subtítulos</b> - Integra subtítulos permanentemente
 🎵 <b>Extraer audio</b> - Obtén solo el audio del video
 
-📥 <b>Descargar archivos:</b>
+📥 <b>Descargar de redes sociales:</b>
+🎵 YouTube (videos y audio)
+📘 Facebook (videos)
+🐦 Twitter/X (videos e imágenes)
 🔷 MEGA (mega.nz)
 🔶 MediaFire (mediafire.com)
 
@@ -35,6 +38,12 @@ Obtén información completa de cualquier anime
 /subtitles - Quemar subtítulos en un video
 /extract_audio - Extraer audio de un video
 
+<b>Comandos de redes sociales:</b>
+/play <nombre> - YouTube audio
+/play2 <nombre> - YouTube video
+/fb <url> - Facebook video
+/x <url> - Twitter/X video/foto
+
 <b>Comandos de descarga:</b>
 /download - Descargar de MEGA o MediaFire
 
@@ -42,7 +51,7 @@ Obtén información completa de cualquier anime
 /anime - Buscar información de anime
 /help - Mostrar ayuda detallada
 
-📥 Envíame un enlace de MEGA/MediaFire o un video para comenzar 🎥
+📥 Envíame un enlace o un video para comenzar 🎥
 
 ✨ <b>Nuevo:</b> Ahora soporto archivos de cualquier tamaño!"""
         
