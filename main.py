@@ -53,7 +53,7 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-# Estado de usuarios
+# Estado de usuarios (DEFINIR ANTES DE IMPORTAR HANDLERS)
 user_states = {}
 
 # Importar handlers
@@ -66,6 +66,9 @@ from handlers import (
     extract_audio_handler,
     download_handler,
     anime_handler,
+    youtube_handler,
+    facebook_handler,
+    twitter_handler,
     video_handler,
     photo_handler,
     document_handler,
@@ -82,6 +85,9 @@ subtitles_handler.register(app, user_states)
 extract_audio_handler.register(app, user_states)
 download_handler.register(app)
 anime_handler.register(app, user_states, WORK_DIR)
+youtube_handler.register(app, DOWNLOAD_DIR)
+facebook_handler.register(app, DOWNLOAD_DIR)
+twitter_handler.register(app, DOWNLOAD_DIR)
 video_handler.register(app, user_states, WORK_DIR)
 photo_handler.register(app, user_states, WORK_DIR)
 document_handler.register(app, user_states, WORK_DIR)
