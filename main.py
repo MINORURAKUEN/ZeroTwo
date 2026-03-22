@@ -9,6 +9,7 @@ import os
 import logging
 from pathlib import Path
 from pyrogram import Client
+from handlers import tiktok_handler
 
 # Configuración de logging
 logging.basicConfig(
@@ -73,7 +74,9 @@ from handlers import (
     photo_handler,
     document_handler,
     url_handler,
-    button_callback_handler
+    button_callback_handler,
+    tiktok_handler
+
 )
 
 # Registrar handlers
@@ -93,6 +96,8 @@ photo_handler.register(app, user_states, WORK_DIR)
 document_handler.register(app, user_states, WORK_DIR)
 url_handler.register(app, DOWNLOAD_DIR)
 button_callback_handler.register(app, user_states, WORK_DIR)
+tiktok_handler.register(app)
+
 
 if __name__ == '__main__':
     logger.info("=" * 60)
