@@ -2,18 +2,22 @@ import json
 import logging
 import subprocess
 import os
+import sys
 from pathlib import Path
 
+# Configuración de logging
 logger = logging.getLogger(__name__)
 
 class VideoProcessor:
     @staticmethod
     def _escape_path(path):
+        """Escapa rutas para evitar errores con caracteres especiales."""
         p = str(path).replace('\\', '/').replace(':', '\\:').replace("'", r"\'")
         return f"'{p}'"
 
     @staticmethod
     def probe_media(input_path):
+        """Analiza el archivo usando FFprobe."""
         flags = {
             'SPA': '🇪🇸', 'ESP': '🇪🇸', 'JPN': '🇯🇵', 'JAP': '🇯🇵',
             'ENG': '🇺🇸', 'ENU': '🇺🇸', 'FRA': '🇫🇷', 'FRE': '🇫🇷',
@@ -47,9 +51,9 @@ class VideoProcessor:
     @staticmethod
     def compress_video_resolution(input_path, output_path, scale='640:360', bitrate='800k', crf='25', preset='veryfast'):
         """
-        Versión final corregida para Termux. Usa '-x' para las opciones del codificador.
+        Comprime a 360p usando HandBrakeCLI con PROGRESO EN VIVO en terminal.
         """
-        logger.info(f"⚙️ Intentando compresión 360p (HandBrake): {input_path}")
+        logger.info(f"⚙️ Iniciando compresión: {os.path.basename(input_path)}")
         
         try:
             width, height = scale.split(':')
@@ -57,9 +61,7 @@ class VideoProcessor:
         except:
             width, height = '640', '360'
 
-        # Cambiamos --x264-opts por -x (que es el alias universal)
-        # y eliminamos el prefijo 'preset=' si causa problemas, 
-        # aunque aquí lo dejamos como cadena de opciones.
+        # Comando optimizado para Termux (usando -x para evitar errores de versión)
         cmd = [
             'HandBrakeCLI',
             '-i', str(input_path),
@@ -67,7 +69,7 @@ class VideoProcessor:
             '--format', 'av_mp4',
             '-e', 'x264',
             '-q', str(crf),
-            '-x', 'preset=veryfast:threads=auto', # -x es más compatible que --x264-opts
+            '-x', 'preset=veryfast:threads=auto',
             '-w', width,
             '-l', height,
             '--keep-display-aspect',
@@ -79,34 +81,44 @@ class VideoProcessor:
         ]
 
         try:
-            process = subprocess.run(cmd, capture_output=True, text=True)
+            # Ejecución con Popen para leer la salida en tiempo real
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.STDOUT, 
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+
+            print(f"🚀 Procesando {width}p...")
             
+            # Bucle para capturar el progreso de HandBrake
+            for line in process.stdout:
+                if "Encoding: task" in line:
+                    # Extraer el porcentaje (ej: 15.45 %)
+                    sys.stdout.write(f"\r⏳ {line.strip()}")
+                    sys.stdout.flush()
+            
+            process.wait()
+            print("\n") # Salto de línea al terminar el bucle
+
             if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                logger.info(f"✅ Compresión exitosa: {output_path}")
+                logger.info(f"✅ Compresión finalizada: {output_path}")
                 return True
             else:
-                logger.error(f"❌ Error en HandBrake. Stderr: {process.stderr}")
-                # Si -x también falla, intentamos una versión ultra-simple sin opciones extra
-                return VideoProcessor._compress_fallback(input_path, output_path, width, height, crf)
+                logger.error("❌ Falló la creación del archivo comprimido.")
+                return False
+
         except Exception as e:
-            logger.error(f"❌ Error fatal: {e}")
+            logger.error(f"❌ Error fatal en compresión: {e}")
             return False
 
     @staticmethod
-    def _compress_fallback(input_path, output_path, width, height, crf):
-        """Intento de emergencia con el comando más básico posible."""
-        logger.warning("⚠️ Usando modo fallback de HandBrake...")
-        cmd = [
-            'HandBrakeCLI', '-i', str(input_path), '-o', str(output_path),
-            '-w', width, '-l', height, '-e', 'x264', '-q', str(crf), '--optimize'
-        ]
-        try:
-            subprocess.run(cmd, capture_output=True)
-            return os.path.exists(output_path) and os.path.getsize(output_path) > 0
-        except: return False
-
-    @staticmethod
     def burn_subtitles(video_path, output_path, audio_idx=None, sub_idx=None, is_external=False, external_sub_path=None):
+        """Quema subtítulos y marca de agua CID usando FFmpeg."""
+        logger.info(f"📝 Quemando subtítulos/marca de agua...")
+        
         if is_external and external_sub_path:
             sub_p = VideoProcessor._escape_path(external_sub_path)
             sub_filter = f"subtitles={sub_p}"
@@ -119,17 +131,32 @@ class VideoProcessor:
         full_vf = f"{watermark},{sub_filter}:{sub_style}"
         audio_map = ["-map", f"0:{audio_idx}"] if audio_idx is not None else ["-map", "0:a:0"]
 
-        cmd = ['ffmpeg', '-y', '-i', str(video_path), '-map', '0:v:0', *audio_map, '-vf', full_vf, '-c:v', 'libx264', '-crf', '26', '-preset', 'veryfast', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', str(output_path)]
+        cmd = [
+            'ffmpeg', '-y', '-i', str(video_path), 
+            '-map', '0:v:0', *audio_map, 
+            '-vf', full_vf, 
+            '-c:v', 'libx264', '-crf', '26', '-preset', 'veryfast', 
+            '-c:a', 'aac', '-b:a', '128k', 
+            '-movflags', '+faststart', 
+            str(output_path)
+        ]
+
         try:
+            # Para FFmpeg también puedes ver el progreso si lo deseas, pero suele ser rápido en 360p
             subprocess.run(cmd, check=True, capture_output=True)
             return os.path.exists(output_path)
-        except: return False
+        except Exception as e:
+            logger.error(f"❌ Error en burn_subtitles: {e}")
+            return False
 
     @staticmethod
     def extract_audio(video_path, output_path):
+        """Extrae el audio en MP3."""
         cmd = ['ffmpeg', '-y', '-i', str(video_path), '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', str(output_path)]
         try:
             subprocess.run(cmd, check=True, capture_output=True)
             return os.path.exists(output_path)
-        except: return False
+        except Exception as e:
+            logger.error(f"❌ Error extrayendo audio: {e}")
+            return False
         
