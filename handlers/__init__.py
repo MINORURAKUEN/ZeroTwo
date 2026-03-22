@@ -11,6 +11,9 @@ from . import (
     extract_audio_handler,
     download_handler,
     anime_handler,
+    youtube_handler,
+    facebook_handler,
+    twitter_handler,
     video_handler,
     photo_handler,
     document_handler,
@@ -27,10 +30,12 @@ __all__ = [
     'extract_audio_handler',
     'download_handler',
     'anime_handler',
+    'youtube_handler',
+    'facebook_handler',
+    'twitter_handler',
     'video_handler',
     'photo_handler',
     'document_handler',
     'url_handler',
     'button_callback_handler'
 ]
-
