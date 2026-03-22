@@ -1,7 +1,6 @@
 """
-VideoProcessor - Clase mejorada para procesar videos con FFmpeg
-Soporte para: MKV, AVI, ISO, Subdrips (pistas forzadas) y selección de canales.
-Actualización: Estilo visual optimizado y corrección de índices de subtítulos.
+VideoProcessor - Clase profesional para procesar videos con FFmpeg
+Soporte para: MKV, AVI, ISO, Subdrips (pistas forzadas) y selección visual con banderas.
 """
 
 import re
@@ -13,15 +12,28 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 class VideoProcessor:
-    """Clase para procesar videos usando FFmpeg con soporte multicanal"""
+    """Clase para procesar videos usando FFmpeg con soporte multicanal y visual"""
     
     @staticmethod
     def probe_media(input_path):
         """
-        Analiza el archivo para detectar pistas de audio, subtítulos y subdrips.
-        Usa un contador independiente para los subtítulos (necesario para el filtro si).
+        Analiza el archivo, detecta idiomas y asigna banderas para los botones.
         """
         logger.info(f"🔍 Analizando flujos de: {input_path}")
+        
+        # Diccionario de banderas por código de idioma (ISO 639-2)
+        flags = {
+            'SPA': '🇪🇸', 'ESP': '🇪🇸',
+            'JPN': '🇯🇵', 'JAP': '🇯🇵',
+            'ENG': '🇺🇸', 'ENU': '🇺🇸',
+            'FRA': '🇫🇷', 'FRE': '🇫🇷',
+            'GER': '🇩🇪', 'DEU': '🇩🇪',
+            'POR': '🇧🇷', 'ITA': '🇮🇹',
+            'KOR': '🇰🇷', 'CHI': '🇨🇳', 
+            'ZHO': '🇨🇳', 'RUS': '🇷🇺',
+            'UND': '🏳️'
+        }
+
         try:
             cmd = [
                 'ffprobe', '-v', 'quiet', '-print_format', 'json',
@@ -31,29 +43,32 @@ class VideoProcessor:
             data = json.loads(result.stdout)
             
             info = {'audio': [], 'subtitle': []}
-            sub_count = 0  # Contador relativo para pistas de subtítulos
+            sub_count = 0 
             
             for stream in data.get('streams', []):
                 s_index = stream.get('index')
                 s_type = stream.get('codec_type')
-                lang = stream.get('tags', {}).get('language', 'und').upper()
+                
+                # Obtener idioma y asignar bandera
+                lang_code = stream.get('tags', {}).get('language', 'UND').upper()
+                flag = flags.get(lang_code, '🏳️')
+                
                 title = stream.get('tags', {}).get('title', 'Pista')
                 
-                # Detectar si es Subdrip o pista Forzada
                 disposition = stream.get('disposition', {})
                 is_forced = disposition.get('forced', 0) == 1
-                suffix = " (FORZADO/SUBDRIP)" if is_forced else ""
+                suffix = " (FORZADO)" if is_forced else ""
 
                 if s_type == 'audio':
                     info['audio'].append({
                         'index': s_index,
-                        'label': f"🔊 {lang} - {title}"
+                        'label': f"{flag} {lang_code} - {title}"
                     })
                 elif s_type == 'subtitle':
-                    # IMPORTANTE: Para el filtro 'subtitles', usamos sub_count (0, 1, 2...)
+                    # Usamos sub_count para el filtro 'si' en burn_subtitles
                     info['subtitle'].append({
                         'index': sub_count,
-                        'label': f"📝 [{sub_count}] {lang} {suffix}"
+                        'label': f"{flag} [{sub_count}] {lang_code}{suffix}"
                     })
                     sub_count += 1
             
@@ -66,10 +81,7 @@ class VideoProcessor:
     @staticmethod
     def burn_subtitles(video_path, output_path, audio_idx=None, sub_idx=None, is_external=False, external_sub_path=None):
         """
-        Quema subtítulos con estilo personalizado:
-        - Texto: Blanco
-        - Borde: Azul Claro
-        - Fondo: Transparente (Sin recuadro negro)
+        Quema subtítulos con estilo: Texto blanco, contorno azul claro, sin fondo.
         """
         logger.info(f"📝 Iniciando quemado de subtítulos")
         
@@ -79,13 +91,11 @@ class VideoProcessor:
             sub_path_escaped = str(external_sub_path).replace('\\', '/').replace(':', '\\:')
             sub_filter = f"subtitles='{sub_path_escaped}'"
         else:
-            # Selecciona la pista interna exacta usando el índice relativo
+            # si={sub_idx} es el índice relativo de la pista de subtítulos
             sub_filter = f"subtitles='{video_escaped}':si={sub_idx}"
 
-        # --- ESTILO ACTUALIZADO ---
-        # PrimaryColour: Blanco (&HFFFFFF)
-        # OutlineColour: Azul Claro (&HAABB00 en formato BGR)
-        # BorderStyle=1: Contorno simple (sin fondo negro)
+        # Estilo visual solicitado:
+        # BorderStyle=1 (Sin caja negra), OutlineColour=&HAABB00 (Azul claro)
         style = (
             "force_style='"
             "Fontname=Arial,FontSize=22,Bold=1,"
@@ -101,8 +111,8 @@ class VideoProcessor:
 
         cmd = [
             'ffmpeg', '-y', '-i', video_path,
-            '-map', '0:v:0',           # Video original
-            *audio_map,                # Audio elegido
+            '-map', '0:v:0',
+            *audio_map,
             '-vf', f"{sub_filter}:{style}",
             '-c:v', 'libx264', '-crf', '20', '-preset', 'veryfast',
             '-c:a', 'aac', '-b:a', '128k',
@@ -111,14 +121,8 @@ class VideoProcessor:
         ]
 
         try:
-            logger.info(f"🚀 Ejecutando quema: Audio {audio_idx}, Sub {sub_idx}")
             process = subprocess.run(cmd, capture_output=True, text=True)
-            
-            if process.returncode != 0:
-                logger.error(f"❌ FFmpeg Error: {process.stderr}")
-                return False
-                
-            return True
+            return process.returncode == 0
         except Exception as e:
             logger.error(f"❌ Error quemando subtítulos: {e}")
             return False
@@ -150,4 +154,4 @@ class VideoProcessor:
             return True
         except:
             return False
-            
+                                         
