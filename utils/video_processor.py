@@ -68,6 +68,7 @@ class VideoProcessor:
                     })
                     sub_count += 1
             
+            logger.info(f"✅ Análisis completo: {len(info['audio'])} audios, {len(info['subtitle'])} subs.")
             return info
         except Exception as e:
             logger.error(f"❌ Error en probe_media: {e}")
@@ -84,13 +85,13 @@ class VideoProcessor:
         
         video_escaped = str(video_path).replace('\\', '/').replace(':', '\\:')
         
-        # 1. Configuración de Subtítulos (Borde Azul Claro: &HAABB00)
         if is_external and external_sub_path:
             sub_path_escaped = str(external_sub_path).replace('\\', '/').replace(':', '\\:')
             sub_filter = f"subtitles='{sub_path_escaped}'"
         else:
             sub_filter = f"subtitles='{video_escaped}':si={sub_idx}"
 
+        # Estilo de Subtítulos: Borde Azul Claro (&HAABB00)
         sub_style = (
             "force_style='"
             "Fontname=Arial,FontSize=22,Bold=1,"
@@ -100,7 +101,7 @@ class VideoProcessor:
             "Outline=2.0,Shadow=1.0,MarginV=25'"
         )
 
-        # 2. Configuración de Marca de Agua (Borde Negro para 'CID')
+        # Marca de Agua: CID, Borde Negro, Cursiva
         watermark = (
             "drawtext="
             "text='CID':"
@@ -112,9 +113,7 @@ class VideoProcessor:
             "borderw=1.5"
         )
 
-        # Combinación de ambos filtros en la cadena de video (-vf)
         full_vf = f"{watermark},{sub_filter}:{sub_style}"
-
         audio_map = ["-map", f"0:{audio_idx}"] if audio_idx is not None else ["-map", "0:a:0"]
 
         cmd = [
@@ -150,7 +149,8 @@ class VideoProcessor:
         try:
             subprocess.run(cmd, check=True)
             return True
-        except:
+        except Exception as e:
+            logger.error(f"❌ Error comprimiendo: {e}")
             return False
 
     @staticmethod
@@ -158,4 +158,9 @@ class VideoProcessor:
         """Extrae el audio en MP3"""
         cmd = ['ffmpeg', '-y', '-i', video_path, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', output_path]
         try:
-        
+            subprocess.run(cmd, check=True)
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error extrayendo audio: {e}")
+            return False
+            
