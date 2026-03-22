@@ -3,25 +3,24 @@ import logging
 import subprocess
 from pathlib import Path
 
-# Configuración básica de logging
-logging.basicConfig(level=logging.INFO)
+# Configuración de logging para Termux
 logger = logging.getLogger(__name__)
 
 class VideoProcessor:
     """
     Clase profesional para procesar videos.
-    Combina la potencia de FFmpeg y la eficiencia de HandBrakeCLI.
+    Actualizada para usar HandBrakeCLI manteniendo compatibilidad con nombres antiguos.
     """
     
     @staticmethod
     def _escape_path(path):
-        """Escapa rutas para que FFmpeg/HandBrake no fallen con caracteres especiales."""
+        """Escapa rutas para evitar errores con espacios o caracteres especiales."""
         p = str(path).replace('\\', '/').replace(':', '\\:').replace("'", r"\'")
         return f"'{p}'"
 
     @staticmethod
     def probe_media(input_path):
-        """Analiza el archivo usando FFprobe."""
+        """Analiza el archivo usando FFprobe para detectar pistas e idiomas."""
         logger.info(f"🔍 Analizando flujos de: {input_path}")
         
         flags = {
@@ -72,85 +71,104 @@ class VideoProcessor:
             return None
 
     @staticmethod
-    def compress_to_360p(input_path, output_path, encoder='x264', quality=25):
+    def compress_video_resolution(input_path, output_path, scale='640:360', bitrate='800k', crf='25', preset='veryfast'):
         """
-        USA HANDBRAKE para comprimir a 360p.
-        Ideal para reducir tamaño manteniendo máxima compatibilidad.
+        Mantiene el nombre original solicitado por el handler.
+        Ahora utiliza HandBrakeCLI para una compresión superior a 360p.
         """
-        logger.info(f"⚙️ Comprimiendo a 360p con HandBrake: {input_path}")
+        logger.info(f"⚙️ Comprimiendo a 360p con HandBrakeCLI: {input_path}")
         
+        # HandBrakeCLI usa -w para ancho y -l para alto. 
+        # Si scale es '640:360', extraemos los valores:
+        try:
+            width, height = scale.split(':')
+        except:
+            width, height = '640', '360'
+
         cmd = [
             'HandBrakeCLI',
             '-i', str(input_path),
             '-o', str(output_path),
-            '-e', encoder,            # 'x264' o 'x265'
-            '-q', str(quality),       # Calidad (20-25 es ideal)
-            '--preset', 'veryfast',
-            '-w', '640',              # Ancho 360p
-            '-l', '360',              # Alto 360p
+            '-e', 'x264',             # Encoder H.264
+            '-q', str(crf),           # Calidad (CRF)
+            '--preset', preset,
+            '-w', width,
+            '-l', height.replace('-1', '360'), # Asegura 360 si viene como -1
             '--keep-display-aspect',
             '--modulus', '2',
-            '-a', '1',                # Primer track de audio
-            '-E', 'av_aac',           # Audio en AAC
-            '-B', '128',              # Bitrate audio
+            '-a', '1',                # Primer pista de audio
+            '-E', 'av_aac',           # Encoder AAC
+            '-B', '128',              # Bitrate Audio
             '--mixdown', 'stereo',
-            '--optimize'              # Web Optimized (Fast Start)
+            '--optimize'              # Optimización para Telegram (Fast Start)
         ]
 
         try:
-            # HandBrake envía el progreso a stderr
+            # Ejecutamos HandBrake
             process = subprocess.run(cmd, capture_output=True, text=True)
             if process.returncode != 0:
                 logger.error(f"❌ HandBrake falló: {process.stderr}")
                 return False
-            logger.info(f"✅ Compresión completada: {output_path}")
             return True
         except Exception as e:
-            logger.error(f"❌ Error en proceso HandBrake: {e}")
+            logger.error(f"❌ Error en compresión: {e}")
             return False
 
     @staticmethod
-    def burn_subtitles_with_watermark(video_path, output_path, sub_idx=0):
+    def burn_subtitles(video_path, output_path, audio_idx=None, sub_idx=None, is_external=False, external_sub_path=None):
         """
-        USA FFMPEG para quemar subtítulos y marca de agua (HandBrake es limitado aquí).
-        Mantiene los 360p si el input ya lo es.
+        Quema subtítulos y agrega la marca de agua 'CID' temporal.
+        Se usa FFmpeg aquí por su flexibilidad con filtros de texto.
         """
-        logger.info(f"📝 Quemando subtítulos y marca de agua con FFmpeg")
+        logger.info(f"📝 Iniciando quemado con marca de agua (CID)")
         
-        vid_p = VideoProcessor._escape_path(video_path)
-        
-        sub_filter = f"subtitles={vid_p}:si={sub_idx}"
+        if is_external and external_sub_path:
+            sub_p = VideoProcessor._escape_path(external_sub_path)
+            sub_filter = f"subtitles={sub_p}"
+        else:
+            vid_p = VideoProcessor._escape_path(video_path)
+            sub_filter = f"subtitles={vid_p}:si={sub_idx}"
+
         sub_style = (
-            "force_style='Fontname=sans,FontSize=18,Bold=1,"
+            "force_style='Fontname=sans,FontSize=20,Bold=1,"
             "PrimaryColour=&HFFFFFF,OutlineColour=&HAABB00,"      
-            "BorderStyle=1,Outline=2.0,Shadow=1.0,MarginV=20'"
+            "BorderStyle=1,Outline=2.0,Shadow=1.0,MarginV=25'"
         )
 
+        # Marca de agua que desaparece a los 6 segundos
         watermark = (
-            "drawtext=text='CID':x=20:y=20:font='sans':fontsize=20:"
+            "drawtext=text='CID':x=20:y=20:font='sans':fontsize=22:"
             "fontcolor=white:bordercolor=black:borderw=1.5:enable='lt(t,6)'" 
         )
 
         full_vf = f"{watermark},{sub_filter}:{sub_style}"
+        audio_map = ["-map", f"0:{audio_idx}"] if audio_idx is not None else ["-map", "0:a:0"]
 
         cmd = [
             'ffmpeg', '-y', '-i', str(video_path),
+            '-map', '0:v:0', *audio_map,
             '-vf', full_vf,
             '-c:v', 'libx264', '-crf', '26', '-preset', 'veryfast',
-            '-c:a', 'copy', # Copiamos el audio para no re-procesar
-            str(output_path)
+            '-c:a', 'aac', '-b:a', '128k',
+            '-movflags', '+faststart'
         ]
+        
+        # Si el input ya fue comprimido a 360p, este proceso será muy rápido
+        cmd.append(str(output_path))
 
         try:
-            subprocess.run(cmd, check=True, capture_output=True)
+            process = subprocess.run(cmd, capture_output=True, text=True)
+            if process.returncode != 0:
+                logger.error(f"❌ FFmpeg falló: {process.stderr}")
+                return False
             return True
         except Exception as e:
-            logger.error(f"❌ Error quemando subtítulos: {e}")
+            logger.error(f"❌ Error en quemado de subtítulos: {e}")
             return False
 
     @staticmethod
     def extract_audio(video_path, output_path):
-        """Extrae el audio en MP3 usando FFmpeg."""
+        """Extrae el audio en MP3."""
         cmd = [
             'ffmpeg', '-y', '-i', str(video_path),
             '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', 
@@ -162,17 +180,4 @@ class VideoProcessor:
         except Exception as e:
             logger.error(f"❌ Error extrayendo audio: {e}")
             return False
-
-# --- EJEMPLO DE USO ---
-if __name__ == "__main__":
-    vp = VideoProcessor()
-    input_file = "mi_video_4k.mp4"
-    temp_360p = "video_360p_base.mp4"
-    final_file = "resultado_final_360p.mp4"
-
-    # 1. Comprimir a 360p con HandBrake (Rápido y eficiente)
-    if vp.compress_to_360p(input_file, temp_360p):
-        # 2. Quemar subtítulos y marca de agua sobre el archivo ya pequeño
-        vp.burn_subtitles_with_watermark(temp_360p, final_file, sub_idx=0)
-        print("🚀 Proceso terminado con éxito")
-                
+        
