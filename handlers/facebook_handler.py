@@ -119,7 +119,22 @@ def register(app, download_dir):
             
             logger.info(f"✅ URL de descarga obtenida: {video_url[:60]}...")
             
-            # Enviar video
+            # Descargar video primero (Telegram no puede acceder directo a algunas URLs)
+            await status_msg.edit_text("📥 Descargando video...")
+            
+            output_file = download_dir / f"fb_{message.from_user.id}.mp4"
+            
+            logger.info("📥 Descargando video de Facebook...")
+            dl_cmd = f'curl -s -L -o "{output_file}" "{video_url}"'
+            dl_result = subprocess.run(dl_cmd, shell=True, timeout=180)
+            
+            if dl_result.returncode != 0 or not output_file.exists():
+                raise Exception("Error descargando el video")
+            
+            file_size = output_file.stat().st_size / (1024 * 1024)
+            logger.info(f"✅ Video descargado: {file_size:.2f} MB")
+            
+            # Enviar video desde archivo local
             await status_msg.edit_text("📤 Enviando video...")
             
             caption = f"✅ <b>Video de Facebook</b>"
@@ -137,12 +152,16 @@ def register(app, download_dir):
                     last_percent[0] = percent
             
             await message.reply_video(
-                video=video_url,
+                video=str(output_file),
                 caption=caption,
                 parse_mode=enums.ParseMode.HTML,
                 supports_streaming=True,
                 progress=upload_progress
             )
+            
+            # Limpiar archivo temporal
+            output_file.unlink()
+            logger.info("🗑️ Archivo temporal eliminado")
             
             await status_msg.delete()
             logger.info("✅ Video de Facebook enviado exitosamente")
