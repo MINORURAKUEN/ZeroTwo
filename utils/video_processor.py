@@ -1,8 +1,3 @@
-"""
-VideoProcessor - Clase profesional para procesar videos con FFmpeg
-Soporte para: MKV, AVI, ISO, Subdrips, Banderas y Marca de Agua personalizada.
-"""
-
 import re
 import json
 import logging
@@ -15,22 +10,21 @@ class VideoProcessor:
     """Clase para procesar videos usando FFmpeg con soporte multicanal y visual"""
     
     @staticmethod
+    def _escape_filter_path(path):
+        """Escapa rutas para filtros de FFmpeg (maneja ':', '\' y caracteres especiales)"""
+        p = str(path).replace('\\', '/').replace(':', '\\:').replace("'", r"\'")
+        return f"'{p}'"
+
+    @staticmethod
     def probe_media(input_path):
-        """
-        Analiza el archivo, detecta idiomas y asigna banderas para los botones.
-        """
+        """Analiza el archivo y detecta idiomas."""
         logger.info(f"🔍 Analizando flujos de: {input_path}")
         
         flags = {
-            'SPA': '🇪🇸', 'ESP': '🇪🇸',
-            'JPN': '🇯🇵', 'JAP': '🇯🇵',
-            'ENG': '🇺🇸', 'ENU': '🇺🇸',
-            'FRA': '🇫🇷', 'FRE': '🇫🇷',
-            'GER': '🇩🇪', 'DEU': '🇩🇪',
-            'POR': '🇧🇷', 'ITA': '🇮🇹',
-            'KOR': '🇰🇷', 'CHI': '🇨🇳', 
-            'ZHO': '🇨🇳', 'RUS': '🇷🇺',
-            'UND': '🏳️'
+            'SPA': '🇪🇸', 'ESP': '🇪🇸', 'JPN': '🇯🇵', 'JAP': '🇯🇵',
+            'ENG': '🇺🇸', 'ENU': '🇺🇸', 'FRA': '🇫🇷', 'FRE': '🇫🇷',
+            'GER': '🇩🇪', 'DEU': '🇩🇪', 'POR': '🇧🇷', 'ITA': '🇮🇹',
+            'KOR': '🇰🇷', 'CHI': '🇨🇳', 'ZHO': '🇨🇳', 'RUS': '🇷🇺', 'UND': '🏳️'
         }
 
         try:
@@ -42,7 +36,8 @@ class VideoProcessor:
             data = json.loads(result.stdout)
             
             info = {'audio': [], 'subtitle': []}
-            sub_count = 0 
+            # FFmpeg usa índices globales, pero para filtros de subtítulos internos se usa el índice relativo
+            sub_relative_idx = 0 
             
             for stream in data.get('streams', []):
                 s_index = stream.get('index')
@@ -62,13 +57,13 @@ class VideoProcessor:
                         'label': f"{flag} {lang_code} - {title}"
                     })
                 elif s_type == 'subtitle':
+                    # Importante: para filtros 'subtitles', si_index es el orden del sub en el archivo
                     info['subtitle'].append({
-                        'index': sub_count,
-                        'label': f"{flag} [{sub_count}] {lang_code}{suffix}"
+                        'index': sub_relative_idx, 
+                        'label': f"{flag} [{sub_relative_idx}] {lang_code}{suffix}"
                     })
-                    sub_count += 1
+                    sub_relative_idx += 1
             
-            logger.info(f"✅ Análisis completo: {len(info['audio'])} audios, {len(info['subtitle'])} subs.")
             return info
         except Exception as e:
             logger.error(f"❌ Error en probe_media: {e}")
@@ -76,91 +71,59 @@ class VideoProcessor:
 
     @staticmethod
     def burn_subtitles(video_path, output_path, audio_idx=None, sub_idx=None, is_external=False, external_sub_path=None):
-        """
-        Quema subtítulos y agrega marca de agua 'CID'.
-        - Subtítulos: Borde Azul Claro.
-        - Marca de Agua: Borde Negro + Cursiva (Arriba-Izquierda).
-        """
+        """Quema subtítulos y agrega marca de agua 'CID'"""
         logger.info(f"📝 Iniciando quemado con marca de agua 'CID'")
         
-        video_escaped = str(video_path).replace('\\', '/').replace(':', '\\:')
-        
+        # 1. Escapado Robusto de Rutas
         if is_external and external_sub_path:
-            sub_path_escaped = str(external_sub_path).replace('\\', '/').replace(':', '\\:')
-            sub_filter = f"subtitles='{sub_path_escaped}'"
+            sub_path = VideoProcessor._escape_filter_path(external_sub_path)
+            sub_filter = f"subtitles={sub_path}"
         else:
-            sub_filter = f"subtitles='{video_escaped}':si={sub_idx}"
+            video_p = VideoProcessor._escape_filter_path(video_path)
+            sub_filter = f"subtitles={video_p}:si={sub_idx}"
 
-        # Estilo de Subtítulos: Borde Azul Claro (&HAABB00)
+        # 2. Estilos mejorados (se usa 'sans-serif' por compatibilidad en Termux/Linux)
         sub_style = (
             "force_style='"
-            "Fontname=Arial,FontSize=22,Bold=1,"
+            "Fontname=sans-serif,FontSize=22,Bold=1,"
             "PrimaryColour=&HFFFFFF,"      
             "OutlineColour=&HAABB00,"      
-            "BorderStyle=1,"                
-            "Outline=2.0,Shadow=1.0,MarginV=25'"
+            "BorderStyle=1,Outline=2.0,Shadow=1.0,MarginV=25'"
         )
 
-        # Marca de Agua: CID, Borde Negro, Cursiva
         watermark = (
             "drawtext="
-            "text='CID':"
-            "x=20:y=20:"
-            "font='Arial':italic=1:"
-            "fontsize=24:"
-            "fontcolor=white:"
-            "bordercolor=black:"
-            "borderw=1.5"
+            "text='CID':x=20:y=20:"
+            "font='sans-serif':italic=1:fontsize=24:"
+            "fontcolor=white:bordercolor=black:borderw=1.5"
         )
 
+        # 3. Construcción del filtro de video
         full_vf = f"{watermark},{sub_filter}:{sub_style}"
+        
+        # Selección de audio
         audio_map = ["-map", f"0:{audio_idx}"] if audio_idx is not None else ["-map", "0:a:0"]
 
         cmd = [
-            'ffmpeg', '-y', '-i', video_path,
+            'ffmpeg', '-y', '-i', str(video_path),
             '-map', '0:v:0',
             *audio_map,
             '-vf', full_vf,
             '-c:v', 'libx264', '-crf', '20', '-preset', 'veryfast',
             '-c:a', 'aac', '-b:a', '128k',
+            '-threads', '4', # Recomendado para Termux para no saturar el kernel
             '-movflags', '+faststart',
-            output_path
+            str(output_path)
         ]
 
         try:
+            # Capturamos stderr para ver qué falla exactamente si falla
             process = subprocess.run(cmd, capture_output=True, text=True)
-            return process.returncode == 0
-        except Exception as e:
-            logger.error(f"❌ Error en proceso FFmpeg: {e}")
-            return False
-
-    @staticmethod
-    def compress_video_resolution(input_path, output_path, scale=None, bitrate='2000k', crf='23', preset='medium'):
-        """Comprime video manteniendo la compatibilidad"""
-        cmd = ['ffmpeg', '-y', '-i', input_path]
-        if scale:
-            cmd.extend(['-vf', f'scale={scale}:force_original_aspect_ratio=decrease:flags=lanczos,pad={scale}:(ow-iw)/2:(oh-ih)/2'])
-        
-        cmd.extend([
-            '-c:v', 'libx264', '-crf', crf, '-preset', preset, 
-            '-b:v', bitrate, '-c:a', 'aac', '-b:a', '128k', output_path
-        ])
-        
-        try:
-            subprocess.run(cmd, check=True)
+            if process.returncode != 0:
+                logger.error(f"❌ FFmpeg falló. Error: {process.stderr}")
+                return False
             return True
         except Exception as e:
-            logger.error(f"❌ Error comprimiendo: {e}")
+            logger.error(f"❌ Excepción en FFmpeg: {e}")
             return False
-
-    @staticmethod
-    def extract_audio(video_path, output_path):
-        """Extrae el audio en MP3"""
-        cmd = ['ffmpeg', '-y', '-i', video_path, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', output_path]
-        try:
-            subprocess.run(cmd, check=True)
-            return True
-        except Exception as e:
-            logger.error(f"❌ Error extrayendo audio: {e}")
-            return False
-            
+    
