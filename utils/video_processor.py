@@ -1,6 +1,6 @@
 """
 VideoProcessor - Clase profesional para procesar videos con FFmpeg
-Soporte para: MKV, AVI, ISO, Subdrips (pistas forzadas) y selección visual con banderas.
+Soporte para: MKV, AVI, ISO, Subdrips, Banderas y Marca de Agua personalizada.
 """
 
 import re
@@ -21,7 +21,6 @@ class VideoProcessor:
         """
         logger.info(f"🔍 Analizando flujos de: {input_path}")
         
-        # Diccionario de banderas por código de idioma (ISO 639-2)
         flags = {
             'SPA': '🇪🇸', 'ESP': '🇪🇸',
             'JPN': '🇯🇵', 'JAP': '🇯🇵',
@@ -49,10 +48,8 @@ class VideoProcessor:
                 s_index = stream.get('index')
                 s_type = stream.get('codec_type')
                 
-                # Obtener idioma y asignar bandera
                 lang_code = stream.get('tags', {}).get('language', 'UND').upper()
                 flag = flags.get(lang_code, '🏳️')
-                
                 title = stream.get('tags', {}).get('title', 'Pista')
                 
                 disposition = stream.get('disposition', {})
@@ -65,14 +62,12 @@ class VideoProcessor:
                         'label': f"{flag} {lang_code} - {title}"
                     })
                 elif s_type == 'subtitle':
-                    # Usamos sub_count para el filtro 'si' en burn_subtitles
                     info['subtitle'].append({
                         'index': sub_count,
                         'label': f"{flag} [{sub_count}] {lang_code}{suffix}"
                     })
                     sub_count += 1
             
-            logger.info(f"✅ Análisis completo: {len(info['audio'])} audios, {len(info['subtitle'])} subs.")
             return info
         except Exception as e:
             logger.error(f"❌ Error en probe_media: {e}")
@@ -81,31 +76,44 @@ class VideoProcessor:
     @staticmethod
     def burn_subtitles(video_path, output_path, audio_idx=None, sub_idx=None, is_external=False, external_sub_path=None):
         """
-        Quema subtítulos con estilo: Texto blanco, contorno azul claro, sin fondo.
+        Quema subtítulos y agrega marca de agua 'CID'.
+        - Subtítulos: Borde Azul Claro.
+        - Marca de Agua: Borde Negro + Cursiva (Arriba-Izquierda).
         """
-        logger.info(f"📝 Iniciando quemado de subtítulos")
+        logger.info(f"📝 Iniciando quemado con marca de agua 'CID'")
         
         video_escaped = str(video_path).replace('\\', '/').replace(':', '\\:')
         
+        # 1. Configuración de Subtítulos (Borde Azul Claro: &HAABB00)
         if is_external and external_sub_path:
             sub_path_escaped = str(external_sub_path).replace('\\', '/').replace(':', '\\:')
             sub_filter = f"subtitles='{sub_path_escaped}'"
         else:
-            # si={sub_idx} es el índice relativo de la pista de subtítulos
             sub_filter = f"subtitles='{video_escaped}':si={sub_idx}"
 
-        # Estilo visual solicitado:
-        # BorderStyle=1 (Sin caja negra), OutlineColour=&HAABB00 (Azul claro)
-        style = (
+        sub_style = (
             "force_style='"
             "Fontname=Arial,FontSize=22,Bold=1,"
             "PrimaryColour=&HFFFFFF,"      
             "OutlineColour=&HAABB00,"      
             "BorderStyle=1,"                
-            "Outline=2.0,"                  
-            "Shadow=1.0,"                   
-            "MarginV=25'"
+            "Outline=2.0,Shadow=1.0,MarginV=25'"
         )
+
+        # 2. Configuración de Marca de Agua (Borde Negro para 'CID')
+        watermark = (
+            "drawtext="
+            "text='CID':"
+            "x=20:y=20:"
+            "font='Arial':italic=1:"
+            "fontsize=24:"
+            "fontcolor=white:"
+            "bordercolor=black:"
+            "borderw=1.5"
+        )
+
+        # Combinación de ambos filtros en la cadena de video (-vf)
+        full_vf = f"{watermark},{sub_filter}:{sub_style}"
 
         audio_map = ["-map", f"0:{audio_idx}"] if audio_idx is not None else ["-map", "0:a:0"]
 
@@ -113,7 +121,7 @@ class VideoProcessor:
             'ffmpeg', '-y', '-i', video_path,
             '-map', '0:v:0',
             *audio_map,
-            '-vf', f"{sub_filter}:{style}",
+            '-vf', full_vf,
             '-c:v', 'libx264', '-crf', '20', '-preset', 'veryfast',
             '-c:a', 'aac', '-b:a', '128k',
             '-movflags', '+faststart',
@@ -124,7 +132,7 @@ class VideoProcessor:
             process = subprocess.run(cmd, capture_output=True, text=True)
             return process.returncode == 0
         except Exception as e:
-            logger.error(f"❌ Error quemando subtítulos: {e}")
+            logger.error(f"❌ Error en proceso FFmpeg: {e}")
             return False
 
     @staticmethod
@@ -150,8 +158,4 @@ class VideoProcessor:
         """Extrae el audio en MP3"""
         cmd = ['ffmpeg', '-y', '-i', video_path, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', output_path]
         try:
-            subprocess.run(cmd, check=True)
-            return True
-        except:
-            return False
-                                         
+        
