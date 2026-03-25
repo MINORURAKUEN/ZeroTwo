@@ -1,10 +1,14 @@
 """
 enhance_handler.py - Mejora de imagen con IA (upscale 4x)
 Comandos: /enhance, /hd, /remini
-Acepta: foto enviada directamente o respondiendo a una foto/documento imagen
+Modos:
+  1. Envía la foto con /hd como caption
+  2. Responde a una foto con /hd
+  3. Escribe /hd solo → activa modo espera → envía foto
 """
 
-import io
+import asyncio
+import json
 import logging
 import subprocess
 from pathlib import Path
@@ -13,220 +17,219 @@ from pyrogram.types import Message
 
 logger = logging.getLogger(__name__)
 
-# API de APICausas — upscale 4x
 _APIKEY   = "causa-0e3eacf90ab7be15"
 _ENDPOINT = "https://rest.apicausas.xyz/api/v1/utilidades/upscale?apikey={apikey}&url={url}&type=4"
-
-# Tipos MIME de imagen aceptados
 _VALID_MIME = {'image/jpeg', 'image/jpg', 'image/png'}
 
 
-def register(app, work_dir):
+def register(app, user_states, work_dir):
     """Registra el handler de mejora de imagen."""
 
+    # ── MODO 1 y 2: comando con foto adjunta o respondiendo a foto ────────────
     @app.on_message(filters.command(["enhance", "hd", "remini"]))
     async def enhance_command(client, message: Message):
-        """
-        Mejora la calidad de una imagen con IA (upscale 4x).
-        Uso:
-          - Envía /enhance respondiendo a una foto
-          - Envía /enhance con una foto adjunta
-        """
 
-        # ── Obtener foto: del quoted o del propio mensaje ─────────────────────
-        target = message.reply_to_message if message.reply_to_message else message
-
-        photo = target.photo
-        doc   = target.document if (
-            target.document and
-            getattr(target.document, 'mime_type', '') in _VALID_MIME
+        # Caso A: foto enviada con el comando como caption
+        photo = message.photo
+        doc   = message.document if (
+            message.document and
+            getattr(message.document, 'mime_type', '') in _VALID_MIME
         ) else None
 
+        # Caso B: respondiendo a un mensaje con foto
+        if not photo and not doc and message.reply_to_message:
+            rep   = message.reply_to_message
+            photo = rep.photo
+            doc   = rep.document if (
+                rep.document and
+                getattr(rep.document, 'mime_type', '') in _VALID_MIME
+            ) else None
+
+        # Caso C: solo el comando, sin foto → activar modo espera
         if not photo and not doc:
+            user_id = message.from_user.id
+            user_states[user_id] = {'action': 'enhance', 'step': 'waiting_photo'}
             await message.reply_text(
                 "🖼️ <b>Mejorador de Imagen con IA</b>\n\n"
-                "Envíame una imagen o responde a una con el comando.\n\n"
-                "<b>Uso:</b>\n"
-                "<code>/enhance</code> — responde a una foto\n"
-                "<code>/hd</code>     — alias\n"
-                "<code>/remini</code> — alias\n\n"
-                "✨ Mejora la resolución hasta <b>4x</b> con IA.",
+                "Ahora envíame la imagen que quieres mejorar.\n"
+                "✨ Aplicaré upscale 4x con IA.",
                 parse_mode=enums.ParseMode.HTML
             )
             return
 
-        user_id  = message.from_user.id
-        username = message.from_user.username or message.from_user.first_name
-        logger.info(f"🖼️ Enhance solicitado por @{username}")
+        await _process_enhance(message, photo or doc, work_dir)
 
-        status_msg = await message.reply_text(
-            "⏳ <b>Procesando imagen…</b>\n"
-            "⬇️ Descargando foto…",
+    # ── MODO 3: foto enviada tras activar modo espera ─────────────────────────
+    @app.on_message(filters.photo | filters.document)
+    async def enhance_waiting(client, message: Message):
+        user_id = message.from_user.id
+
+        if user_id not in user_states:
+            return
+        state = user_states.get(user_id, {})
+        if state.get('action') != 'enhance' or state.get('step') != 'waiting_photo':
+            return
+
+        media = message.photo or (
+            message.document if getattr(message.document, 'mime_type', '') in _VALID_MIME
+            else None
+        )
+        if not media:
+            return
+
+        del user_states[user_id]
+        await _process_enhance(message, media, work_dir)
+
+
+# ── Lógica principal ──────────────────────────────────────────────────────────
+
+async def _process_enhance(message: Message, media, work_dir: Path):
+    """Descarga, sube, llama a la API y responde con la imagen mejorada."""
+    user_id  = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    logger.info(f"🖼️ Enhance solicitado por @{username}")
+
+    status_msg = await message.reply_text(
+        "⏳ <b>Procesando imagen…</b>\n⬇️ Descargando…",
+        parse_mode=enums.ParseMode.HTML
+    )
+
+    local_path  = work_dir / f"{user_id}_enhance_in.jpg"
+    output_path = work_dir / f"{user_id}_enhance_out.jpg"
+
+    try:
+        # 1. Descargar
+        await message.download(file_name=str(local_path))
+        size_kb = local_path.stat().st_size / 1024
+        logger.info(f"✅ Descargada: {size_kb:.1f} KB")
+
+        await status_msg.edit_text(
+            "⏳ <b>Procesando imagen…</b>\n☁️ Subiendo para obtener URL…",
             parse_mode=enums.ParseMode.HTML
         )
 
-        local_path = work_dir / f"{user_id}_enhance_input.jpg"
-        output_path = work_dir / f"{user_id}_enhance_output.jpg"
+        # 2. Subir a host público (en thread para no bloquear)
+        image_url = await asyncio.to_thread(_upload_image_sync, local_path)
+        if not image_url:
+            raise RuntimeError("No se pudo obtener URL pública. Revisa conexión a internet.")
 
+        logger.info(f"🔗 URL: {image_url}")
+
+        await status_msg.edit_text(
+            "⏳ <b>Procesando imagen…</b>\n✨ Aplicando upscale 4x con IA…\n"
+            "<i>Puede tardar 15-30 segundos</i>",
+            parse_mode=enums.ParseMode.HTML
+        )
+
+        # 3. Llamar API upscale (en thread)
+        enhanced_bytes = await asyncio.to_thread(_upscale_sync, image_url)
+        if not enhanced_bytes:
+            raise RuntimeError("La API no devolvió imagen válida. Intenta con otra foto.")
+
+        output_path.write_bytes(enhanced_bytes)
+        out_size_kb = output_path.stat().st_size / 1024
+        logger.info(f"✅ Imagen mejorada: {out_size_kb:.1f} KB")
+
+        await status_msg.edit_text(
+            "⏳ <b>Procesando imagen…</b>\n📤 Enviando resultado…",
+            parse_mode=enums.ParseMode.HTML
+        )
+
+        # 4. Enviar
+        await message.reply_photo(
+            photo=str(output_path),
+            caption=(
+                "✅ <b>Imagen mejorada con IA</b>\n\n"
+                f"📥 Original:  {size_kb:.1f} KB\n"
+                f"📤 Mejorada: {out_size_kb:.1f} KB\n"
+                "✨ Upscale 4x aplicado"
+            ),
+            parse_mode=enums.ParseMode.HTML
+        )
+        await status_msg.delete()
+        logger.info("✅ Enviada exitosamente")
+
+    except Exception as e:
+        logger.error(f"❌ enhance error: {e}", exc_info=True)
+        await status_msg.edit_text(
+            f"❌ <b>Error al mejorar la imagen</b>\n\n{str(e)[:300]}",
+            parse_mode=enums.ParseMode.HTML
+        )
+    finally:
+        local_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
+
+
+# ── Funciones síncronas (se llaman desde asyncio.to_thread) ──────────────────
+
+def _upload_image_sync(path: Path) -> str | None:
+    """Intenta subir la imagen a hosts públicos en cascada."""
+    for fn in [_try_tmpfiles, _try_0x0, _try_fileio]:
         try:
-            # ── 1. Descargar la foto ──────────────────────────────────────────
-            await target.download(file_name=str(local_path))
-            size_kb = local_path.stat().st_size / 1024
-            logger.info(f"✅ Foto descargada: {size_kb:.1f} KB")
-
-            await status_msg.edit_text(
-                "⏳ <b>Procesando imagen…</b>\n"
-                "☁️ Subiendo a servidor para mejorar…",
-                parse_mode=enums.ParseMode.HTML
-            )
-
-            # ── 2. Subir imagen a un host público para obtener URL ────────────
-            image_url = await _upload_image(local_path)
-            if not image_url:
-                raise RuntimeError("No se pudo obtener URL pública de la imagen.")
-
-            logger.info(f"🔗 URL pública: {image_url[:80]}")
-
-            await status_msg.edit_text(
-                "⏳ <b>Procesando imagen…</b>\n"
-                "✨ Aplicando mejora con IA (upscale 4x)…\n"
-                "<i>Esto puede tardar 10-30 segundos</i>",
-                parse_mode=enums.ParseMode.HTML
-            )
-
-            # ── 3. Llamar a la API de upscale ─────────────────────────────────
-            enhanced_bytes = await _upscale_image(image_url)
-            if not enhanced_bytes:
-                raise RuntimeError("La API no devolvió una imagen válida.")
-
-            output_path.write_bytes(enhanced_bytes)
-            out_size_kb = output_path.stat().st_size / 1024
-            logger.info(f"✅ Imagen mejorada: {out_size_kb:.1f} KB")
-
-            await status_msg.edit_text(
-                "⏳ <b>Procesando imagen…</b>\n"
-                "📤 Enviando imagen mejorada…",
-                parse_mode=enums.ParseMode.HTML
-            )
-
-            # ── 4. Enviar resultado ────────────────────────────────────────────
-            await message.reply_photo(
-                photo=str(output_path),
-                caption=(
-                    "✅ <b>Imagen mejorada con IA</b>\n\n"
-                    f"📥 Original: {size_kb:.1f} KB\n"
-                    f"📤 Mejorada: {out_size_kb:.1f} KB\n"
-                    "✨ Upscale 4x aplicado"
-                ),
-                parse_mode=enums.ParseMode.HTML
-            )
-
-            await status_msg.delete()
-            logger.info("✅ Imagen mejorada enviada exitosamente")
-
-        except Exception as e:
-            logger.error(f"❌ Error en enhance: {e}", exc_info=True)
-            await status_msg.edit_text(
-                f"❌ <b>Error al mejorar la imagen</b>\n\n{str(e)[:200]}",
-                parse_mode=enums.ParseMode.HTML
-            )
-        finally:
-            local_path.unlink(missing_ok=True)
-            output_path.unlink(missing_ok=True)
-
-
-# ── Funciones auxiliares ───────────────────────────────────────────────────────
-
-async def _upload_image(image_path: Path) -> str | None:
-    """
-    Sube la imagen a un host público y devuelve la URL directa.
-    Intenta: tmpfiles.org → 0x0.st → file.io
-    """
-    import urllib.request
-
-    uploaders = [
-        _upload_tmpfiles,
-        _upload_0x0,
-        _upload_fileio,
-    ]
-
-    for uploader in uploaders:
-        try:
-            url = await uploader(image_path)
+            url = fn(path)
             if url and url.startswith('http'):
+                logger.info(f"✅ Subida exitosa con {fn.__name__}: {url}")
                 return url
         except Exception as e:
-            logger.warning(f"⚠️ Uploader {uploader.__name__} falló: {e}")
-            continue
-
+            logger.warning(f"⚠️ {fn.__name__} falló: {e}")
     return None
 
 
-async def _upload_tmpfiles(path: Path) -> str | None:
-    """Sube a tmpfiles.org — devuelve URL directa."""
-    import json
-    result = subprocess.run(
+def _try_tmpfiles(path: Path) -> str | None:
+    r = subprocess.run(
         ['curl', '-s', '-F', f'file=@{path}', 'https://tmpfiles.org/api/v1/upload'],
         capture_output=True, text=True, timeout=30
     )
-    if result.returncode != 0:
+    if r.returncode != 0 or not r.stdout.strip():
         return None
-    data = json.loads(result.stdout)
+    data = json.loads(r.stdout)
     url  = data.get('data', {}).get('url', '')
-    # Convertir URL de vista a URL directa
     return url.replace('tmpfiles.org/', 'tmpfiles.org/dl/') if url else None
 
 
-async def _upload_0x0(path: Path) -> str | None:
-    """Sube a 0x0.st — devuelve URL directa."""
-    result = subprocess.run(
+def _try_0x0(path: Path) -> str | None:
+    r = subprocess.run(
         ['curl', '-s', '-F', f'file=@{path}', 'https://0x0.st'],
         capture_output=True, text=True, timeout=30
     )
-    url = result.stdout.strip()
+    url = r.stdout.strip()
     return url if url.startswith('http') else None
 
 
-async def _upload_fileio(path: Path) -> str | None:
-    """Sube a file.io — devuelve URL directa."""
-    import json
-    result = subprocess.run(
+def _try_fileio(path: Path) -> str | None:
+    r = subprocess.run(
         ['curl', '-s', '-F', f'file=@{path}', 'https://file.io'],
         capture_output=True, text=True, timeout=30
     )
-    if result.returncode != 0:
+    if r.returncode != 0 or not r.stdout.strip():
         return None
-    data = json.loads(result.stdout)
+    data = json.loads(r.stdout)
     return data.get('link') if data.get('success') else None
 
 
-async def _upscale_image(image_url: str) -> bytes | None:
-    """Llama a la API de APICausas para upscale 4x y devuelve los bytes."""
-    import json
-
+def _upscale_sync(image_url: str) -> bytes | None:
+    """Llama a la API de APICausas y devuelve bytes de imagen."""
     endpoint = _ENDPOINT.format(apikey=_APIKEY, url=image_url)
-    logger.info(f"🔌 Llamando API upscale: {endpoint[:80]}…")
+    logger.info(f"🔌 API upscale: {endpoint[:100]}")
 
-    result = subprocess.run(
-        ['curl', '-s', '-L', '--max-time', '60', '-o', '-', endpoint],
-        capture_output=True, timeout=70
+    r = subprocess.run(
+        ['curl', '-s', '-L', '--max-time', '90', '-o', '-', endpoint],
+        capture_output=True, timeout=100
     )
 
-    if result.returncode != 0 or not result.stdout:
-        logger.error(f"❌ API upscale sin respuesta (código {result.returncode})")
+    if r.returncode != 0 or not r.stdout:
+        logger.error(f"❌ curl falló (código {r.returncode})")
         return None
 
-    # Verificar que la respuesta sea imagen y no JSON de error
-    raw = result.stdout
-    if raw[:4] in (b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1',  # JPEG
-                   b'\x89PNG', b'GIF8'):                        # PNG / GIF
+    raw = r.stdout
+    # Verificar magic bytes de imagen
+    if (raw[:2] == b'\xff\xd8' or          # JPEG
+        raw[:8] == b'\x89PNG\r\n\x1a\n'):  # PNG
         return raw
 
-    # Puede ser JSON de error
+    # Loguear respuesta de error
     try:
-        err = json.loads(raw.decode('utf-8', errors='ignore'))
-        logger.error(f"❌ API upscale error: {err}")
+        logger.error(f"❌ API error: {json.loads(raw.decode('utf-8', errors='ignore'))}")
     except Exception:
-        logger.error(f"❌ Respuesta inesperada de API ({len(raw)} bytes)")
-
+        logger.error(f"❌ Respuesta no es imagen ({len(raw)} bytes): {raw[:80]}")
     return None
