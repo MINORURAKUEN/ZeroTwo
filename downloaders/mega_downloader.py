@@ -1,5 +1,5 @@
 """
-MEGADownloader - Descarga archivos de MEGA usando megatools
+mega_downloader.py - Descarga archivos de MEGA con barra de progreso en Telegram y terminal
 """
 
 import re
@@ -10,87 +10,105 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _progress_bar(pct: int, width: int = 10) -> str:
+    filled = int(width * pct / 100)
+    return '▓' * filled + '░' * (width - filled)
+
+
 class MEGADownloader:
-    """Clase para descargar archivos de MEGA con progreso en tiempo real"""
-    
+    """Descarga archivos de MEGA con progreso en tiempo real."""
+
     @staticmethod
-    def is_mega_url(url):
-        """Verifica si es una URL de MEGA"""
-        mega_patterns = [r'mega\.nz', r'mega\.co\.nz']
-        return any(re.search(pattern, url, re.IGNORECASE) for pattern in mega_patterns)
-    
+    def is_mega_url(url: str) -> bool:
+        return bool(re.search(r'mega\.(nz|co\.nz)', url, re.IGNORECASE))
+
     @staticmethod
-    async def download(url, output_dir, progress_callback=None):
-        """Descarga archivo de MEGA usando megatools con monitoreo mejorado"""
+    async def download(url: str, output_dir: Path, progress_callback=None) -> tuple[bool, Path | None, str | None]:
+        """
+        Descarga un archivo de MEGA.
+        progress_callback(text) → actualiza el mensaje de Telegram.
+        Retorna (success, file_path, error_msg).
+        """
         try:
             logger.info("🔷 Iniciando descarga desde MEGA")
-            
-            # Verificar que megatools esté instalado
-            check_cmd = ['megadl', '--version']
-            result = subprocess.run(check_cmd, capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                logger.error("❌ megatools no está instalado")
-                return False, None, "❌ megatools no está instalado.\nInstala con: pkg install megatools"
-            
+
+            # Verificar megatools
+            if subprocess.run(['megadl', '--version'], capture_output=True).returncode != 0:
+                return False, None, "❌ megatools no instalado.\nEjecuta: pkg install megatools"
+
             if progress_callback:
-                await progress_callback("📥 Descargando de MEGA...")
-            
-            logger.info(f"📥 URL: {url}")
-            
-            # Comando de descarga con opciones mejoradas
+                await progress_callback(
+                    "🔷 <b>Descargando de MEGA</b>\n"
+                    "⏳ Iniciando conexión…"
+                )
+
             cmd = [
                 'megadl',
                 '--path', str(output_dir),
                 '--print-names',
-                '--no-progress',  # Desactivar barra de progreso de megadl
-                url
+                url,
             ]
-            
-            logger.info(f"🔧 Ejecutando: megadl --path {output_dir} [URL]")
-            logger.info("⏳ Descargando desde MEGA...")
-            
-            # Ejecutar comando
+
+            logger.info(f"🔧 megadl → {output_dir} | URL: {url[:60]}…")
+
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
-                bufsize=1
+                bufsize=1,
             )
-            
-            # Monitorear salida en tiempo real
-            filename = None
-            for line in process.stdout:
-                line = line.strip()
-                if line:
-                    logger.info(f"[MEGA] {line}")
-                    
-                    # Capturar nombre del archivo
-                    if not filename and line and not line.startswith('ERROR'):
-                        filename = line
-            
+
+            last_pct    = [-10]
+            filename    = None
+
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+
+                logger.info(f"[MEGA] {line}")
+
+                # megatools muestra líneas como:  45.23% of 234.50 MB, 3.20 MB/s
+                m = re.search(r'([\d.]+)%\s+of\s+([\d.]+)\s*(\w+)', line)
+                if m:
+                    pct      = float(m.group(1))
+                    total    = float(m.group(2))
+                    unit     = m.group(3)
+                    pct_int  = int(pct)
+
+                    # Terminal: siempre
+                    logger.info(f"📥 MEGA {pct:.1f}% de {total:.1f} {unit}")
+
+                    # Telegram: cada 10 %
+                    if pct_int - last_pct[0] >= 10 and progress_callback:
+                        bar = _progress_bar(pct_int)
+                        await progress_callback(
+                            f"🔷 <b>Descargando de MEGA</b>\n"
+                            f"{bar} {pct_int}%\n"
+                            f"💾 {total:.1f} {unit} totales"
+                        )
+                        last_pct[0] = pct_int
+                    continue
+
+                # Primera línea que no sea error = nombre del archivo
+                if filename is None and not line.upper().startswith('ERROR'):
+                    filename = line
+
             process.wait()
-            
-            if process.returncode == 0:
-                # Buscar el archivo descargado
-                files = list(output_dir.glob('*'))
-                if files:
-                    latest_file = max(files, key=lambda p: p.stat().st_mtime)
-                    file_size = latest_file.stat().st_size / (1024 * 1024)
-                    
-                    logger.info(f"✅ Descarga MEGA completada")
-                    logger.info(f"📁 Archivo: {latest_file.name}")
-                    logger.info(f"📦 Tamaño: {file_size:.2f} MB")
-                    
-                    return True, latest_file, None
-                else:
-                    logger.error("❌ Archivo no encontrado después de la descarga")
-                    return False, None, "❌ Archivo no encontrado"
-            else:
-                logger.error(f"❌ Error en megadl: código {process.returncode}")
-                return False, None, "❌ Error descargando de MEGA"
-            
+
+            if process.returncode != 0:
+                return False, None, "❌ megadl terminó con error. Revisa la URL o la red."
+
+            files = sorted(output_dir.glob('*'), key=lambda p: p.stat().st_mtime, reverse=True)
+            if not files:
+                return False, None, "❌ Archivo no encontrado tras la descarga."
+
+            latest = files[0]
+            size_mb = latest.stat().st_size / (1024 * 1024)
+            logger.info(f"✅ MEGA descargado: {latest.name} ({size_mb:.1f} MB)")
+            return True, latest, None
+
         except Exception as e:
-            logger.error(f"❌ Error en descarga MEGA: {e}", exc_info=True)
-            return False, None, f"❌ Error: {str(e)}"
+            logger.error(f"❌ Error MEGA: {e}", exc_info=True)
+            return False, None, str(e)
