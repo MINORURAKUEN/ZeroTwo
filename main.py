@@ -2,14 +2,13 @@
 """
 Rikka Bot - Bot de Telegram para procesamiento de videos
 Autor: @MINORURAKUEN
-GitHub: https://github.com/MINORURAKUEN/ZeroTwo
+GitHub: https://github.com/MINORURAKUEN/Rikka-Bot
 """
 
 import os
 import logging
 from pathlib import Path
 from pyrogram import Client
-from handlers import tiktok_handler
 
 # Configuración de logging
 logging.basicConfig(
@@ -70,13 +69,12 @@ from handlers import (
     youtube_handler,
     facebook_handler,
     twitter_handler,
+    tiktok_handler,
     video_handler,
     photo_handler,
     document_handler,
     url_handler,
-    button_callback_handler,
-    tiktok_handler
-
+    button_callback_handler
 )
 
 # Registrar handlers
@@ -91,13 +89,12 @@ anime_handler.register(app, user_states, WORK_DIR)
 youtube_handler.register(app, DOWNLOAD_DIR)
 facebook_handler.register(app, DOWNLOAD_DIR)
 twitter_handler.register(app, DOWNLOAD_DIR)
+tiktok_handler.register(app, DOWNLOAD_DIR)
 video_handler.register(app, user_states, WORK_DIR)
 photo_handler.register(app, user_states, WORK_DIR)
 document_handler.register(app, user_states, WORK_DIR)
 url_handler.register(app, DOWNLOAD_DIR)
 button_callback_handler.register(app, user_states, WORK_DIR)
-tiktok_handler.register(app)
-
 
 if __name__ == '__main__':
     logger.info("=" * 60)
