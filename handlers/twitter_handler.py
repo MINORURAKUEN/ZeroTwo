@@ -110,14 +110,29 @@ def register(app, download_dir):
                     if not video_url:
                         continue
                     
-                    logger.info(f"📹 Enviando video...")
+                    logger.info(f"📹 Descargando y enviando video...")
                     
-                    await message.reply_video(
-                        video=video_url,
-                        caption=caption,
-                        parse_mode=enums.ParseMode.HTML,
-                        supports_streaming=True
-                    )
+                    tmp_video = download_dir / f"tw_{message.from_user.id}.mp4"
+                    
+                    try:
+                        # Descargar video
+                        dl_cmd = f'curl -s -L -o "{tmp_video}" "{video_url}"'
+                        subprocess.run(dl_cmd, shell=True, timeout=120)
+                        
+                        if not tmp_video.exists():
+                            raise Exception("Error descargando video")
+                        
+                        await message.reply_video(
+                            video=str(tmp_video),
+                            caption=caption,
+                            parse_mode=enums.ParseMode.HTML,
+                            supports_streaming=True
+                        )
+                        
+                        logger.info("✅ Video enviado")
+                        
+                    finally:
+                        tmp_video.unlink(missing_ok=True)
                 
                 await status_msg.delete()
                 logger.info("✅ Video de Twitter enviado exitosamente")
