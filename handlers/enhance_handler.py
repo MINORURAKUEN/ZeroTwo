@@ -36,28 +36,33 @@ def register(app, user_states, work_dir):
             getattr(message.document, 'mime_type', '') in _VALID_MIME
         ) else None
 
+        if photo or doc:
+            # La foto está en el mismo mensaje del comando
+            await _process_enhance(message, photo or doc, work_dir, source_msg=message)
+            return
+
         # Caso B: respondiendo a un mensaje con foto
-        if not photo and not doc and message.reply_to_message:
+        if message.reply_to_message:
             rep   = message.reply_to_message
             photo = rep.photo
             doc   = rep.document if (
                 rep.document and
                 getattr(rep.document, 'mime_type', '') in _VALID_MIME
             ) else None
+            if photo or doc:
+                # La foto está en el mensaje citado
+                await _process_enhance(message, photo or doc, work_dir, source_msg=rep)
+                return
 
         # Caso C: solo el comando, sin foto → activar modo espera
-        if not photo and not doc:
-            user_id = message.from_user.id
-            user_states[user_id] = {'action': 'enhance', 'step': 'waiting_photo'}
-            await message.reply_text(
-                "🖼️ <b>Mejorador de Imagen con IA</b>\n\n"
-                "Ahora envíame la imagen que quieres mejorar.\n"
-                "✨ Aplicaré upscale 4x con IA.",
-                parse_mode=enums.ParseMode.HTML
-            )
-            return
-
-        await _process_enhance(message, photo or doc, work_dir)
+        user_id = message.from_user.id
+        user_states[user_id] = {'action': 'enhance', 'step': 'waiting_photo'}
+        await message.reply_text(
+            "🖼️ <b>Mejorador de Imagen con IA</b>\n\n"
+            "Ahora envíame la imagen que quieres mejorar.\n"
+            "✨ Aplicaré upscale 4x con IA.",
+            parse_mode=enums.ParseMode.HTML
+        )
 
     # ── MODO 3: foto enviada tras activar modo espera ─────────────────────────
     @app.on_message(filters.photo | filters.document)
@@ -78,12 +83,12 @@ def register(app, user_states, work_dir):
             return
 
         del user_states[user_id]
-        await _process_enhance(message, media, work_dir)
+        await _process_enhance(message, media, work_dir, source_msg=message)
 
 
 # ── Lógica principal ──────────────────────────────────────────────────────────
 
-async def _process_enhance(message: Message, media, work_dir: Path):
+async def _process_enhance(message: Message, media, work_dir: Path, source_msg=None):
     """Descarga, sube, llama a la API y responde con la imagen mejorada."""
     user_id  = message.from_user.id
     username = message.from_user.username or message.from_user.first_name
@@ -97,9 +102,12 @@ async def _process_enhance(message: Message, media, work_dir: Path):
     local_path  = work_dir / f"{user_id}_enhance_in.jpg"
     output_path = work_dir / f"{user_id}_enhance_out.jpg"
 
+    # El mensaje que contiene la foto real (puede ser el quoted)
+    dl_msg = source_msg if source_msg else message
+
     try:
-        # 1. Descargar
-        await message.download(file_name=str(local_path))
+        # 1. Descargar desde el mensaje correcto
+        await dl_msg.download(file_name=str(local_path))
         size_kb = local_path.stat().st_size / 1024
         logger.info(f"✅ Descargada: {size_kb:.1f} KB")
 
