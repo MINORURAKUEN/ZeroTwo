@@ -1,5 +1,6 @@
 """
-url_handler.py - Manejador de URLs (descargas MEGA/MediaFire)
+url_handler.py - Manejador de URLs (MEGA / MediaFire)
+Muestra barra de progreso en Telegram y en terminal durante descarga y envío.
 """
 
 import re
@@ -8,152 +9,184 @@ from pathlib import Path
 from pyrogram import filters, enums
 from pyrogram.types import Message
 from downloaders import MEGADownloader, MediaFireDownloader
+from downloaders.drive_downloader import DriveDownloader, take_video_screenshots
 
 logger = logging.getLogger(__name__)
 
+VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.m4v'}
+AUDIO_EXTS = {'.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac'}
+IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+
+
+def _progress_bar(pct: int, width: int = 10) -> str:
+    filled = int(width * pct / 100)
+    return '▓' * filled + '░' * (width - filled)
+
 
 def register(app, download_dir):
-    """Registra el handler de URLs"""
-    
+    """Registra el handler de URLs."""
+
     @app.on_message(filters.text & filters.regex(r'https?://'))
     async def handle_url(client, message: Message):
-        """Maneja URLs para descargas"""
-        url = message.text.strip()
-        user_id = message.from_user.id
+        url      = message.text.strip()
+        user_id  = message.from_user.id
         username = message.from_user.username or message.from_user.first_name
-        
-        logger.info(f"🔗 URL recibida de @{username}: {url[:80]}...")
-        
-        # Determinar el servicio
-        service_name = None
-        is_mega = MEGADownloader.is_mega_url(url)
+
+        logger.info(f"🔗 URL de @{username}: {url[:80]}")
+
+        is_mega      = MEGADownloader.is_mega_url(url)
         is_mediafire = MediaFireDownloader.is_mediafire_url(url)
-        
-        if not is_mega and not is_mediafire:
-            logger.info(f"⏭️ URL no es de MEGA ni MediaFire, ignorando")
+        is_drive     = DriveDownloader.is_drive_url(url)
+
+        if not any([is_mega, is_mediafire, is_drive]):
+            logger.info("⏭️ URL ignorada (no es MEGA, MediaFire ni Drive)")
             return
-        
+
         if is_mega:
-            service_name = "MEGA"
-            logger.info("✅ Servicio detectado: MEGA")
+            service = "MEGA"
         elif is_mediafire:
-            service_name = "MediaFire"
-            logger.info("✅ Servicio detectado: MEDIAFIRE")
-        
-        # Crear directorio temporal para este usuario
-        user_download_dir = download_dir / f"user_{user_id}"
-        user_download_dir.mkdir(exist_ok=True)
-        
+            service = "MediaFire"
+        else:
+            service = "Google Drive"
+
+        logger.info(f"✅ Servicio: {service}")
+
+        user_dir = download_dir / f"user_{user_id}"
+        user_dir.mkdir(exist_ok=True)
+
         status_msg = await message.reply_text(
-            f"📥 <b>Iniciando descarga desde {service_name}</b>\n\n"
-            f"Esto puede tardar varios minutos...",
+            f"📥 <b>Iniciando descarga desde {service}…</b>",
             parse_mode=enums.ParseMode.HTML
         )
-        
-        # Callback de progreso
-        async def progress_callback(text):
+
+        # ── Callback de progreso → Telegram ──────────────────────────────────
+        async def tg_progress(text: str):
             try:
-                await status_msg.edit_text(text)
-            except:
+                await status_msg.edit_text(text, parse_mode=enums.ParseMode.HTML)
+            except Exception:
                 pass
-        
+
+        # ── Descarga ──────────────────────────────────────────────────────────
         try:
-            # Descargar según el servicio
             if is_mega:
-                success, file_path, error = await MEGADownloader.download(
-                    url, user_download_dir, progress_callback
-                )
+                success, file_path, error = await MEGADownloader.download(url, user_dir, tg_progress)
+            elif is_mediafire:
+                success, file_path, error = await MediaFireDownloader.download(url, user_dir, tg_progress)
             else:
-                success, file_path, error = await MediaFireDownloader.download(
-                    url, user_download_dir, progress_callback
-                )
-            
+                success, file_path, error = await DriveDownloader.download(url, user_dir, tg_progress)
+
             if not success:
                 await status_msg.edit_text(
-                    f"❌ <b>Error descargando de {service_name}</b>\n\n"
-                    f"{error}",
+                    f"❌ <b>Error descargando de {service}</b>\n\n{error}",
                     parse_mode=enums.ParseMode.HTML
                 )
                 return
-            
-            # Archivo descargado exitosamente
-            logger.info(f"✅ Descarga completada: {file_path}")
-            
+
             file_size = file_path.stat().st_size / (1024 * 1024)
-            filename = file_path.name
-            file_ext = file_path.suffix.lower()
-            
-            logger.info(f"📦 Tamaño del archivo: {file_size:.2f} MB")
-            logger.info(f"📤 Preparando envío de archivo ({file_ext})...")
-            
+            file_ext  = file_path.suffix.lower()
+            filename  = file_path.name
+
+            logger.info(f"✅ Descarga completa: {filename} ({file_size:.1f} MB)")
+
             await status_msg.edit_text(
-                f"✅ <b>Descarga completada</b>\n\n"
-                f"📦 Tamaño: {file_size:.2f} MB\n"
-                f"📤 Enviando archivo...",
+                f"✅ <b>Descarga completada</b>\n"
+                f"📄 {filename}\n"
+                f"📦 {file_size:.1f} MB\n"
+                f"📤 Enviando a Telegram…",
                 parse_mode=enums.ParseMode.HTML
             )
-            
-            # Función de progreso para Pyrogram (más limpia)
-            last_send_percent = [0]
-            async def progress(current, total):
-                percent = int((current / total) * 100)
-                # Mostrar solo cada 10%
-                if percent - last_send_percent[0] >= 10:
-                    mb_current = current / (1024**2)
-                    mb_total = total / (1024**2)
-                    logger.info(f"📤 Enviando: {percent}% ({mb_current:.1f}/{mb_total:.1f} MB)")
-                    last_send_percent[0] = percent
-            
-            # Enviar archivo según su tipo
+
+            # Screenshots si es video
+            if file_ext in VIDEO_EXTS:
+                await _send_screenshots(message, file_path, user_dir, service.lower().replace(' ', '_'))
+
+            # ── Progreso de envío a Telegram ──────────────────────────────────
+            last_pct = [-10]
+
+            async def send_progress(current, total):
+                pct = int(current / total * 100)
+                if pct - last_pct[0] >= 10:
+                    mb_c = current / (1024 ** 2)
+                    mb_t = total   / (1024 ** 2)
+                    bar  = _progress_bar(pct)
+                    logger.info(f"📤 Enviando {pct}% ({mb_c:.1f}/{mb_t:.1f} MB)")
+                    try:
+                        await status_msg.edit_text(
+                            f"📤 <b>Enviando a Telegram</b>\n"
+                            f"📄 {filename}\n"
+                            f"{bar} {pct}%\n"
+                            f"💾 {mb_c:.1f} / {mb_t:.1f} MB",
+                            parse_mode=enums.ParseMode.HTML
+                        )
+                    except Exception:
+                        pass
+                    last_pct[0] = pct
+
+            # ── Enviar archivo ────────────────────────────────────────────────
+            caption = f"✅ Descargado de {service}\n📄 {filename}"
+
             try:
-                if file_ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']:
-                    logger.info("🎬 Enviando como video...")
+                if file_ext in VIDEO_EXTS:
+                    logger.info("🎬 Enviando como video…")
                     await message.reply_video(
-                        video=str(file_path),
-                        caption=f"✅ Descargado de {service_name}",
-                        supports_streaming=True,
-                        progress=progress
+                        video=str(file_path), caption=caption,
+                        supports_streaming=True, progress=send_progress
                     )
-                elif file_ext in ['.mp3', '.m4a', '.wav', '.ogg', '.flac']:
-                    logger.info("🎵 Enviando como audio...")
+                elif file_ext in AUDIO_EXTS:
+                    logger.info("🎵 Enviando como audio…")
                     await message.reply_audio(
-                        audio=str(file_path),
-                        caption=f"✅ Descargado de {service_name}",
-                        progress=progress
+                        audio=str(file_path), caption=caption, progress=send_progress
                     )
-                elif file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
-                    logger.info("🖼️ Enviando como imagen...")
+                elif file_ext in IMAGE_EXTS:
+                    logger.info("🖼️ Enviando como imagen…")
                     await message.reply_photo(
-                        photo=str(file_path),
-                        caption=f"✅ Descargado de {service_name}",
-                        progress=progress
+                        photo=str(file_path), caption=caption, progress=send_progress
                     )
                 else:
                     logger.info(f"📄 Enviando como documento: {filename}")
                     await message.reply_document(
-                        document=str(file_path),
-                        caption=f"✅ Descargado de {service_name}\n📦 {filename}",
-                        progress=progress
+                        document=str(file_path), caption=caption, progress=send_progress
                     )
-                
-                logger.info("✅ Archivo enviado exitosamente al usuario")
+
+                logger.info("✅ Archivo enviado exitosamente")
                 await status_msg.delete()
-                
+
             except Exception as e:
                 logger.error(f"❌ Error enviando archivo: {e}")
                 await status_msg.edit_text(
-                    f"❌ Error enviando el archivo\n\n"
-                    f"El archivo es muy grande o hubo un problema."
+                    "❌ Error enviando el archivo.\n"
+                    "Puede ser que el archivo sea demasiado grande para Telegram."
                 )
-            
-            # Limpiar archivo temporal
-            file_path.unlink()
-            logger.info(f"🗑️ Archivo temporal eliminado")
-            
+
+            file_path.unlink(missing_ok=True)
+            logger.info("🗑️ Archivo temporal eliminado")
+
         except Exception as e:
-            logger.error(f"❌ Error en descarga: {e}", exc_info=True)
+            logger.error(f"❌ Error en handle_url: {e}", exc_info=True)
             await status_msg.edit_text(
-                f"❌ <b>Error descargando</b>\n\n"
-                f"Detalles: {str(e)[:100]}",
+                f"❌ <b>Error</b>\n{str(e)[:200]}",
                 parse_mode=enums.ParseMode.HTML
             )
+
+
+# ── Helper de screenshots ──────────────────────────────────────────────────────
+
+async def _send_screenshots(message: Message, video_path: Path, work_dir: Path, prefix: str):
+    """Captura 5 screenshots y los envía como álbum."""
+    logger.info("📸 Capturando screenshots del video…")
+    shots = await take_video_screenshots(video_path, work_dir, prefix=prefix)
+    if not shots:
+        return
+
+    from pyrogram.types import InputMediaPhoto
+    media_group = [InputMediaPhoto(str(s)) for s in shots]
+    media_group[0] = InputMediaPhoto(str(shots[0]), caption="🎬 <b>Preview del video</b>")
+
+    try:
+        await message.reply_media_group(media=media_group)
+        logger.info(f"✅ {len(shots)} screenshots enviados")
+    except Exception as e:
+        logger.warning(f"⚠️ Error enviando screenshots: {e}")
+    finally:
+        for s in shots:
+            s.unlink(missing_ok=True)
