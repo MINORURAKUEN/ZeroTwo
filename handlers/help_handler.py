@@ -58,19 +58,23 @@ def register(app):
 - /x <url> - Descargar video o fotos de Twitter/X
 - Ejemplo: /x https://x.com/user/status/123456789
 
-<b>8️⃣ MEGA/MediaFire:</b>
+<b>8️⃣ Mejorar Imagen con IA:</b>
+- /enhance, /hd o /remini
+- Responde a una foto o envíala adjunta
+- Aplica upscale 4x con IA
+- Ejemplo: /enhance (respondiendo a una imagen)
+
+<b>9️⃣ MEGA/MediaFire/Drive:</b>
 - Envía /download o pega directamente el enlace
 - Servicios soportados:
   🔷 MEGA (mega.nz, mega.co.nz)
   🔶 MediaFire (mediafire.com)
-
-<b>🎵 TikTok:</b>
-- /tiktok <url> - Descargar video sin marca de agua
-- Ejemplo: /tt https://vt.tiktok.com/+++++
+  ☁️ Google Drive (/gdrive <url>)
+  📤 Subir a Drive (/gdrive_upload)
 
 <b>BÚSQUEDA:</b>
 
-<b>9️⃣ Buscar Anime:</b>
+<b>🔟 Buscar Anime:</b>
 - Envía /anime Nombre del anime
 - Obtén información completa con imagen
 - Ejemplo: /anime One Piece
