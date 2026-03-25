@@ -194,7 +194,7 @@ class VideoProcessor:
     # ─── Quemado de subtítulos (mejorado) ─────────────────────────────────────
 
     @staticmethod
-    def burn_subtitles(
+    async def burn_subtitles(
         video_path,
         subtitle_path,
         output_path,
@@ -202,6 +202,7 @@ class VideoProcessor:
         sub_idx=None,
         is_external=True,
         external_sub_path=None,
+        progress_callback=None,
     ):
         """
         Quema subtítulos en el video con estilo personalizado y marca de agua CID.
@@ -318,11 +319,22 @@ class VideoProcessor:
                 universal_newlines=True,
             )
 
-            line_count = 0
-            for line in process.stderr:
-                if 'frame=' in line:
-                    line_count += 1
-                    if line_count % 30 == 0:
+            # ── Leer stderr en thread para no bloquear el event loop ────────
+            import asyncio
+            import threading
+
+            last_tg_pct = [-10]
+            loop = asyncio.get_event_loop()
+
+            def _bar(pct, w=10):
+                f = int(w * pct / 100)
+                return '\u2593' * f + '\u2591' * (w - f)
+
+            def _read_stderr():
+                line_count = 0
+                for line in process.stderr:
+                    if 'frame=' in line:
+                        line_count += 1
                         frame_match = re.search(r'frame=\s*(\d+)', line)
                         fps_match   = re.search(r'fps=\s*([\d.]+)', line)
                         time_match  = re.search(r'time=\s*([\d:.]+)', line)
@@ -336,18 +348,35 @@ class VideoProcessor:
 
                             if total_frames > 0:
                                 pct = int((frame / total_frames) * 100)
-                                logger.info(
-                                    f"⚙️ Progreso: {pct}% | "
-                                    f"Frame: {frame}/{total_frames} | "
-                                    f"FPS: {fps} | Time: {time} | Speed: {speed}x"
-                                )
+                                if line_count % 30 == 0:
+                                    logger.info(
+                                        f"⚙️ Subtítulos {pct}% | "
+                                        f"Frame: {frame}/{total_frames} | "
+                                        f"FPS: {fps} | Time: {time} | Speed: {speed}x"
+                                    )
+                                if pct - last_tg_pct[0] >= 10 and progress_callback:
+                                    bar = _bar(pct)
+                                    text = (
+                                        f"📝 <b>Quemando subtítulos</b>\n"
+                                        f"{bar} {pct}%\n"
+                                        f"🎞 Frame: {frame}/{total_frames} | ⚡ {speed}x"
+                                    )
+                                    asyncio.run_coroutine_threadsafe(
+                                        progress_callback(text), loop
+                                    )
+                                    last_tg_pct[0] = pct
                             else:
-                                logger.info(f"⚙️ Frame: {frame} | FPS: {fps} | Time: {time}")
+                                if line_count % 30 == 0:
+                                    logger.info(f"⚙️ Frame: {frame} | FPS: {fps} | Time: {time}")
 
-                elif 'error' in line.lower():
-                    logger.warning(f"⚠️ FFmpeg: {line.strip()}")
+                    elif 'error' in line.lower():
+                        logger.warning(f"⚠️ FFmpeg: {line.strip()}")
 
-            process.wait()
+            reader = threading.Thread(target=_read_stderr, daemon=True)
+            reader.start()
+
+            await asyncio.to_thread(process.wait)
+            reader.join()
 
             if process.returncode == 0 and Path(output_path).exists():
                 output_size_mb = Path(output_path).stat().st_size / (1024 * 1024)
