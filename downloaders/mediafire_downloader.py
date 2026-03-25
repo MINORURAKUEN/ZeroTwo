@@ -1,5 +1,5 @@
 """
-MediaFireDownloader - Descarga archivos de MediaFire
+mediafire_downloader.py - Descarga archivos de MediaFire con barra de progreso en Telegram y terminal
 """
 
 import re
@@ -10,200 +10,214 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _progress_bar(pct: int, width: int = 10) -> str:
+    filled = int(width * pct / 100)
+    return '▓' * filled + '░' * (width - filled)
+
+
 class MediaFireDownloader:
-    """Clase para descargar archivos de MediaFire"""
-    
+    """Descarga archivos de MediaFire con progreso en tiempo real."""
+
     @staticmethod
-    def is_mediafire_url(url):
-        """Verifica si es una URL de MediaFire"""
+    def is_mediafire_url(url: str) -> bool:
         return bool(re.search(r'mediafire\.com', url, re.IGNORECASE))
-    
+
     @staticmethod
-    async def get_direct_link(url):
-        """Obtiene el enlace directo de descarga de MediaFire (método mejorado)"""
+    async def get_direct_link(url: str) -> tuple[str | None, str | None]:
+        """Extrae el enlace directo y nombre del archivo desde la página de MediaFire."""
         try:
-            logger.info("🌐 Parseando página de MediaFire...")
-            
-            # Obtener página con User-Agent
-            cmd = ['curl', '-s', '-L', '-A', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', url]
+            logger.info("🌐 Parseando página de MediaFire…")
+            cmd = [
+                'curl', '-s', '-L',
+                '-A', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                url,
+            ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            
             if result.returncode != 0:
-                logger.error("❌ Error obteniendo página de MediaFire")
                 return None, None
-            
+
             html = result.stdout
-            
-            # Patrón 1: Buscar botón de descarga (#downloadButton)
-            download_button_match = re.search(r'<a[^>]*id="downloadButton"[^>]*href="([^"]+)"', html)
-            if download_button_match:
-                direct_url = download_button_match.group(1)
-                logger.info(f"✅ Enlace encontrado (downloadButton): {direct_url[:80]}...")
-            else:
-                # Patrón 2: Buscar enlace de descarga directa
-                direct_match = re.search(r'href="(https://download\d+\.mediafire\.com[^"]+)"', html)
-                if direct_match:
-                    direct_url = direct_match.group(1)
-                    logger.info(f"✅ Enlace encontrado (regex): {direct_url[:80]}...")
-                else:
-                    logger.error("❌ No se encontró enlace de descarga")
-                    return None, None
-            
-            # Obtener nombre del archivo
+
+            # Enlace directo
+            direct_url = None
+            for pattern in [
+                r'<a[^>]*id="downloadButton"[^>]*href="([^"]+)"',
+                r'href="(https://download\d+\.mediafire\.com[^"]+)"',
+            ]:
+                m = re.search(pattern, html)
+                if m:
+                    direct_url = m.group(1)
+                    break
+
+            if not direct_url:
+                logger.error("❌ No se encontró enlace de descarga en MediaFire")
+                return None, None
+
+            # Nombre del archivo
             filename = None
-            
-            # Patrón 1: promoDownloadName
-            name_match1 = re.search(r'<div[^>]*class="[^"]*promoDownloadName[^"]*"[^>]*title="([^"]+)"', html)
-            if name_match1:
-                filename = name_match1.group(1)
-            else:
-                # Patrón 2: filename class
-                name_match2 = re.search(r'<div[^>]*class="[^"]*filename[^"]*"[^>]*>([^<]+)', html)
-                if name_match2:
-                    filename = name_match2.group(1).strip()
-                else:
-                    # Extraer del URL
-                    url_name_match = re.search(r'/file/[^/]+/([^/]+)/', url)
-                    if url_name_match:
-                        filename = url_name_match.group(1)
-                    else:
-                        filename = 'mediafire_file'
-            
-            # Limpiar nombre
+            for pattern in [
+                r'<div[^>]*class="[^"]*promoDownloadName[^"]*"[^>]*title="([^"]+)"',
+                r'<div[^>]*class="[^"]*filename[^"]*"[^>]*>([^<]+)',
+                r'/file/[^/]+/([^/]+)/',
+            ]:
+                m = re.search(pattern, html)
+                if m:
+                    filename = m.group(1).strip()
+                    break
+
+            if not filename:
+                filename = 'mediafire_file'
+
             filename = re.sub(r'\s+', ' ', filename).strip()
             filename = re.sub(r'[^\w\s\-\.]', '_', filename)
-            
-            logger.info(f"📁 Nombre del archivo: {filename}")
-            
+
+            logger.info(f"✅ Enlace y nombre obtenidos: {filename}")
             return direct_url, filename
-            
+
         except Exception as e:
             logger.error(f"❌ Error parseando MediaFire: {e}")
             return None, None
-    
+
     @staticmethod
-    async def download(url, output_dir, progress_callback=None):
-        """Descarga archivo de MediaFire con monitoreo mejorado"""
+    async def download(url: str, output_dir: Path, progress_callback=None) -> tuple[bool, Path | None, str | None]:
+        """
+        Descarga un archivo de MediaFire.
+        progress_callback(text) → actualiza el mensaje de Telegram.
+        Retorna (success, file_path, error_msg).
+        """
         try:
             if progress_callback:
-                await progress_callback("🔍 Obteniendo enlace de descarga...")
-            
-            logger.info("🌐 Obteniendo enlace de MediaFire...")
+                await progress_callback("🔶 <b>MediaFire</b>\n🔍 Obteniendo enlace de descarga…")
+
             direct_url, filename = await MediaFireDownloader.get_direct_link(url)
-            
-            if not direct_url or not filename:
-                return False, None, "❌ No se pudo obtener el enlace de descarga"
-            
+            if not direct_url:
+                return False, None, "❌ No se pudo obtener el enlace de descarga de MediaFire."
+
             output_path = output_dir / filename
-            logger.info(f"📁 Descargando: {filename}")
-            logger.info(f"📥 Desde: {direct_url[:80]}...")
-            
+            logger.info(f"📥 MediaFire: descargando '{filename}'")
+            logger.info(f"   URL: {direct_url[:80]}…")
+
             if progress_callback:
-                await progress_callback(f"⬇️ Descargando: {filename}")
-            
-            # Usar wget con parámetros optimizados para velocidad
-            wget_cmd = [
-                'wget',
-                '-O', str(output_path),
-                '--progress=dot:giga',  # Menos verboso, más rápido
-                '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                '--no-check-certificate',
-                '--timeout=30',  # Timeout de 30 segundos
-                '--tries=3',  # 3 intentos
-                '--continue',  # Continuar descarga si se interrumpe
-                direct_url
-            ]
-            
-            curl_cmd = [
-                'curl',
-                '-L',
-                '-C', '-',  # Continuar descarga
-                '-A', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                '-o', str(output_path),
-                '--speed-limit', '1000',  # Velocidad mínima 1KB/s
-                '--speed-time', '30',  # Timeout si está por debajo de velocidad mínima
-                direct_url
-            ]
-            
-            aria2c_cmd = [
-                'aria2c',
-                '-x', '16',  # 16 conexiones simultáneas
-                '-s', '16',  # 16 servidores
-                '-k', '1M',  # Fragmentos de 1MB
-                '--file-allocation=none',
-                '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                '--allow-overwrite=true',
-                '--auto-file-renaming=false',
-                '-d', str(output_dir),
-                '-o', filename,
-                direct_url
-            ]
-            
-            # Intentar con aria2c primero (más rápido), luego wget, luego curl
-            cmd = None
-            downloader = None
-            
-            try:
-                subprocess.run(['aria2c', '--version'], check=True, capture_output=True)
-                cmd = aria2c_cmd
-                downloader = "aria2c"
-                logger.info("🚀 Usando aria2c para descarga rápida (16 conexiones)")
-            except:
-                try:
-                    subprocess.run(['wget', '--version'], check=True, capture_output=True)
-                    cmd = wget_cmd
-                    downloader = "wget"
-                    logger.info("📥 Usando wget para descargar")
-                except:
-                    cmd = curl_cmd
-                    downloader = "curl"
-                    logger.info("📥 Usando curl para descargar")
-            
-            logger.info("⏳ Iniciando descarga de MediaFire...")
-            
+                await progress_callback(
+                    f"🔶 <b>Descargando de MediaFire</b>\n"
+                    f"📄 {filename}\n"
+                    f"⏳ Iniciando…"
+                )
+
+            # Elegir herramienta de descarga
+            UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+
+            def _has(cmd):
+                return subprocess.run([cmd, '--version'], capture_output=True).returncode == 0
+
+            if _has('aria2c'):
+                cmd = [
+                    'aria2c',
+                    '-x', '16', '-s', '16', '-k', '1M',
+                    '--file-allocation=none',
+                    f'--user-agent={UA}',
+                    '--allow-overwrite=true',
+                    '--auto-file-renaming=false',
+                    '--show-console-readout=true',
+                    '-d', str(output_dir),
+                    '-o', filename,
+                    direct_url,
+                ]
+                tool = 'aria2c'
+            elif _has('wget'):
+                cmd = [
+                    'wget', '-O', str(output_path),
+                    '--progress=dot:mega',
+                    f'--user-agent={UA}',
+                    '--no-check-certificate',
+                    '--timeout=30', '--tries=3', '--continue',
+                    direct_url,
+                ]
+                tool = 'wget'
+            else:
+                cmd = [
+                    'curl', '-L', '-C', '-',
+                    '-A', UA,
+                    '-o', str(output_path),
+                    '--progress-bar',
+                    direct_url,
+                ]
+                tool = 'curl'
+
+            logger.info(f"🚀 Usando {tool} para descargar MediaFire")
+
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
-                bufsize=1
+                bufsize=1,
             )
-            
-            # Monitorear progreso en tiempo real (filtrado mejorado)
-            last_percent = [0]
-            for line in process.stdout:
-                line = line.strip()
-                if line:
-                    # Para aria2c - mostrar solo cada 5%
-                    if downloader == "aria2c" and "SPD:" in line:
-                        percent_match = re.search(r'\((\d+)%\)', line)
-                        if percent_match:
-                            percent = int(percent_match.group(1))
-                            if percent - last_percent[0] >= 5:
-                                logger.info(f"📥 Descargando: {percent}%")
-                                last_percent[0] = percent
-                    # Para wget/curl - mostrar solo cada 10%
-                    elif any(kw in line.lower() for kw in ['%', 'mb', 'kb']):
-                        percent_match = re.search(r'(\d+)%', line)
-                        if percent_match:
-                            percent = int(percent_match.group(1))
-                            if percent - last_percent[0] >= 10:
-                                logger.info(f"📥 Descargando: {percent}%")
-                                last_percent[0] = percent
-                        elif 'saving' in line.lower() or 'mb' in line.lower():
-                            logger.info(f"[MEDIAFIRE] {line}")
-            
+
+            last_pct = [-10]
+
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+
+                # aria2c: "[#abc123 10MiB/100MiB(10%) CN:16 DL:5MiB]"
+                if tool == 'aria2c':
+                    m = re.search(r'\((\d+)%\)', line)
+                    spd = re.search(r'DL:([\d.]+\w+)', line)
+                    if m:
+                        pct = int(m.group(1))
+                        speed = spd.group(1) if spd else ''
+                        logger.info(f"📥 MediaFire {pct}%  {speed}")
+                        if pct - last_pct[0] >= 10 and progress_callback:
+                            bar = _progress_bar(pct)
+                            await progress_callback(
+                                f"🔶 <b>Descargando de MediaFire</b>\n"
+                                f"📄 {filename}\n"
+                                f"{bar} {pct}%\n"
+                                f"⚡ {speed}"
+                            )
+                            last_pct[0] = pct
+
+                # wget: "100%[====] 50.0M  2.50MB/s"
+                elif tool == 'wget':
+                    m = re.search(r'(\d+)%', line)
+                    if m:
+                        pct = int(m.group(1))
+                        logger.info(f"📥 MediaFire {pct}%")
+                        if pct - last_pct[0] >= 10 and progress_callback:
+                            bar = _progress_bar(pct)
+                            await progress_callback(
+                                f"🔶 <b>Descargando de MediaFire</b>\n"
+                                f"📄 {filename}\n"
+                                f"{bar} {pct}%"
+                            )
+                            last_pct[0] = pct
+
+                # curl: progreso en formato libre
+                else:
+                    m = re.search(r'(\d+)\s*%', line)
+                    if m:
+                        pct = int(m.group(1))
+                        logger.info(f"📥 MediaFire {pct}%")
+                        if pct - last_pct[0] >= 10 and progress_callback:
+                            bar = _progress_bar(pct)
+                            await progress_callback(
+                                f"🔶 <b>Descargando de MediaFire</b>\n"
+                                f"📄 {filename}\n"
+                                f"{bar} {pct}%"
+                            )
+                            last_pct[0] = pct
+
             process.wait()
-            
+
             if process.returncode == 0 and output_path.exists():
-                file_size = output_path.stat().st_size / (1024 * 1024)
-                logger.info(f"✅ Descarga MediaFire completada")
-                logger.info(f"📦 Tamaño: {file_size:.2f} MB")
+                size_mb = output_path.stat().st_size / (1024 * 1024)
+                logger.info(f"✅ MediaFire descargado: {filename} ({size_mb:.1f} MB)")
                 return True, output_path, None
             else:
-                logger.error(f"❌ Error en descarga, código: {process.returncode}")
-                return False, None, "❌ Error descargando de MediaFire"
-            
+                return False, None, f"❌ {tool} terminó con error (código {process.returncode})"
+
         except Exception as e:
-            logger.error(f"❌ Error descargando de MediaFire: {e}", exc_info=True)
-            return False, None, f"❌ Error: {str(e)}"
+            logger.error(f"❌ Error MediaFire: {e}", exc_info=True)
+            return False, None, str(e)
