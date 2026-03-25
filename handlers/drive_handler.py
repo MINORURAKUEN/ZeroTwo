@@ -1,0 +1,218 @@
+"""
+drive_handler.py - Descarga desde Google Drive, subida a Drive y screenshots de video
+Comandos: /gdrive <url_o_id>  |  /gdrive_upload (luego enviar archivo)  |  /gdrive_folder <id>
+"""
+
+import logging
+from pathlib import Path
+from pyrogram import filters, enums
+from pyrogram.types import Message
+from downloaders.drive_downloader import DriveDownloader, DriveUploader, take_video_screenshots
+
+logger = logging.getLogger(__name__)
+
+VIDEO_EXTS  = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.m4v'}
+AUDIO_EXTS  = {'.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac'}
+IMAGE_EXTS  = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+
+
+def register(app, user_states, download_dir):
+    """Registra los handlers de Google Drive."""
+
+    # ── Descarga desde Drive ──────────────────────────────────────────────────
+    @app.on_message(filters.command(['gdrive', 'drive', 'dldrive']))
+    async def gdrive_download(client, message: Message):
+        """Descarga un archivo de Google Drive dado su URL o ID."""
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2:
+            await message.reply_text(
+                "☁️ <b>Google Drive Downloader</b>\n\n"
+                "Envía el enlace o ID del archivo:\n"
+                "<code>/gdrive https://drive.google.com/file/d/XXXX/view</code>\n"
+                "<code>/gdrive 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms</code>",
+                parse_mode=enums.ParseMode.HTML
+            )
+            return
+
+        url_or_id = args[1].strip()
+        user_id   = message.from_user.id
+        user_dir  = download_dir / f"user_{user_id}"
+        user_dir.mkdir(exist_ok=True)
+
+        status_msg = await message.reply_text(
+            "☁️ <b>Conectando con Google Drive…</b>",
+            parse_mode=enums.ParseMode.HTML
+        )
+
+        async def tg_progress(text):
+            try:
+                await status_msg.edit_text(text, parse_mode=enums.ParseMode.HTML)
+            except Exception:
+                pass
+
+        success, file_path, error = await DriveDownloader.download(url_or_id, user_dir, tg_progress)
+
+        if not success:
+            await status_msg.edit_text(
+                f"❌ <b>Error descargando de Drive</b>\n\n{error}",
+                parse_mode=enums.ParseMode.HTML
+            )
+            return
+
+        file_size = file_path.stat().st_size / (1024 * 1024)
+        file_ext  = file_path.suffix.lower()
+        filename  = file_path.name
+
+        await status_msg.edit_text(
+            f"✅ <b>Descarga completada</b>\n📄 {filename}\n📦 {file_size:.1f} MB\n📤 Enviando…",
+            parse_mode=enums.ParseMode.HTML
+        )
+
+        # Screenshots si es video
+        if file_ext in VIDEO_EXTS:
+            await _send_screenshots(message, file_path, user_dir, "drive")
+
+        # Enviar archivo
+        last_pct = [0]
+        async def upload_progress(current, total):
+            pct = int(current / total * 100)
+            if pct - last_pct[0] >= 10:
+                logger.info(f"📤 Telegram upload {pct}%")
+                last_pct[0] = pct
+
+        try:
+            await _send_file(message, file_path, file_ext, filename, "Drive", upload_progress)
+            await status_msg.delete()
+        except Exception as e:
+            logger.error(f"❌ Error enviando a Telegram: {e}")
+            await status_msg.edit_text("❌ Error enviando el archivo a Telegram.")
+
+        file_path.unlink(missing_ok=True)
+        logger.info("🗑️ Archivo temporal eliminado")
+
+    # ── Subida a Drive ────────────────────────────────────────────────────────
+    @app.on_message(filters.command(['gdrive_upload', 'drive_upload', 'updrive']))
+    async def gdrive_upload_start(client, message: Message):
+        """Activa el modo de subida a Drive. El siguiente archivo enviado se subirá."""
+        user_id = message.from_user.id
+        args    = message.text.split(maxsplit=1)
+        folder_id = args[1].strip() if len(args) > 1 else None
+
+        user_states[user_id] = {
+            'action': 'gdrive_upload',
+            'step':   'waiting_file',
+            'folder_id': folder_id,
+        }
+
+        folder_info = f"\n📁 Carpeta destino: <code>{folder_id}</code>" if folder_id else ""
+        await message.reply_text(
+            f"☁️ <b>Modo Subida a Drive</b>{folder_info}\n\n"
+            "Envíame el archivo que quieres subir a Google Drive.",
+            parse_mode=enums.ParseMode.HTML
+        )
+
+    @app.on_message(filters.document | filters.video | filters.audio)
+    async def gdrive_upload_file(client, message: Message):
+        """Recibe el archivo y lo sube a Drive si el estado es gdrive_upload."""
+        user_id = message.from_user.id
+
+        if user_id not in user_states:
+            return
+        state = user_states[user_id]
+        if state.get('action') != 'gdrive_upload' or state.get('step') != 'waiting_file':
+            return
+
+        folder_id = state.get('folder_id')
+        user_dir  = download_dir / f"user_{user_id}"
+        user_dir.mkdir(exist_ok=True)
+
+        media = message.document or message.video or message.audio
+        if not media:
+            return
+
+        status_msg = await message.reply_text("⬇️ Descargando archivo de Telegram…")
+
+        try:
+            file_path = Path(await message.download(
+                file_name=str(user_dir / (getattr(media, 'file_name', None) or f"file_{media.file_unique_id}"))
+            ))
+
+            file_size = file_path.stat().st_size / (1024 * 1024)
+            file_ext  = file_path.suffix.lower()
+            logger.info(f"✅ Archivo descargado: {file_path.name} ({file_size:.1f} MB)")
+
+            await status_msg.edit_text(
+                f"📤 <b>Subiendo a Drive…</b>\n📄 {file_path.name}\n📦 {file_size:.1f} MB",
+                parse_mode=enums.ParseMode.HTML
+            )
+
+            async def tg_progress(text):
+                try:
+                    await status_msg.edit_text(text, parse_mode=enums.ParseMode.HTML)
+                except Exception:
+                    pass
+
+            success, info, error = await DriveUploader.upload(file_path, folder_id, progress_callback=tg_progress)
+
+            if success:
+                link = info.get('webViewLink', 'Sin enlace')
+                await status_msg.edit_text(
+                    f"✅ <b>Subido a Google Drive</b>\n"
+                    f"📄 {info.get('name', file_path.name)}\n"
+                    f"🔗 {link}",
+                    parse_mode=enums.ParseMode.HTML
+                )
+                logger.info(f"✅ Subida completa: {link}")
+            else:
+                await status_msg.edit_text(
+                    f"❌ <b>Error subiendo a Drive</b>\n{error}",
+                    parse_mode=enums.ParseMode.HTML
+                )
+
+            file_path.unlink(missing_ok=True)
+            del user_states[user_id]
+
+        except Exception as e:
+            logger.error(f"❌ Error en subida Drive: {e}", exc_info=True)
+            await status_msg.edit_text(f"❌ Error: {str(e)[:200]}")
+
+
+# ── Helpers internos ──────────────────────────────────────────────────────────
+
+async def _send_screenshots(message: Message, video_path: Path, work_dir: Path, prefix: str):
+    """Captura y envía 5 screenshots del video como álbum de fotos."""
+    logger.info("📸 Capturando screenshots del video…")
+    shots = await take_video_screenshots(video_path, work_dir, prefix=prefix)
+
+    if not shots:
+        logger.warning("⚠️ No se generaron screenshots")
+        return
+
+    from pyrogram.types import InputMediaPhoto
+    media_group = [InputMediaPhoto(str(s)) for s in shots]
+    media_group[0] = InputMediaPhoto(
+        str(shots[0]),
+        caption="🎬 <b>Preview del video</b>",
+    )
+
+    try:
+        await message.reply_media_group(media=media_group)
+        logger.info(f"✅ {len(shots)} screenshots enviados")
+    except Exception as e:
+        logger.warning(f"⚠️ Error enviando screenshots: {e}")
+    finally:
+        for s in shots:
+            s.unlink(missing_ok=True)
+
+
+async def _send_file(message: Message, file_path: Path, file_ext: str, filename: str, service: str, progress):
+    """Envía el archivo al chat según su tipo."""
+    caption = f"✅ Descargado de {service}\n📄 {filename}"
+    if file_ext in VIDEO_EXTS:
+        await message.reply_video(video=str(file_path), caption=caption, supports_streaming=True, progress=progress)
+    elif file_ext in AUDIO_EXTS:
+        await message.reply_audio(audio=str(file_path), caption=caption, progress=progress)
+    elif file_ext in IMAGE_EXTS:
+        await message.reply_photo(photo=str(file_path), caption=caption, progress=progress)
+    else:
+        await message.reply_document(document=str(file_path), caption=caption, progress=progress)
