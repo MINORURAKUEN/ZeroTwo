@@ -63,7 +63,13 @@ def register(app, user_states, work_dir):
             logger.info(f"🎬 Video original: {video_path}")
             logger.info(f"📤 Video con subtítulos: {output_path}")
             
-            if VideoProcessor.burn_subtitles(video_path, subtitle_path, str(output_path)):
+            async def burn_progress(text):
+                try:
+                    await status_msg.edit_text(text, parse_mode='html')
+                except Exception:
+                    pass
+
+            if await VideoProcessor.burn_subtitles(video_path, subtitle_path, str(output_path), progress_callback=burn_progress):
                 output_size = output_path.stat().st_size / (1024 * 1024)
                 logger.info(f"✅ Video con subtítulos generado ({output_size:.2f} MB)")
                 logger.info(f"📤 Enviando video al usuario como documento...")
