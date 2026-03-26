@@ -74,7 +74,10 @@ from handlers import (
     photo_handler,
     document_handler,
     url_handler,
-    button_callback_handler
+    button_callback_handler,
+    drive_handler,
+    enhance_handler,
+    notify_handler
 )
 
 # Registrar handlers
@@ -95,6 +98,9 @@ photo_handler.register(app, user_states, WORK_DIR)
 document_handler.register(app, user_states, WORK_DIR)
 url_handler.register(app, DOWNLOAD_DIR)
 button_callback_handler.register(app, user_states, WORK_DIR)
+drive_handler.register(app, user_states, DOWNLOAD_DIR)
+enhance_handler.register(app, user_states, WORK_DIR)
+notify_handler.register(app)
 
 if __name__ == '__main__':
     logger.info("=" * 60)
@@ -134,9 +140,18 @@ if __name__ == '__main__':
     logger.info("⏸️ Presiona Ctrl+C para detener")
     logger.info("=" * 60)
     
+    async def run_bot():
+        async with app:
+            logger.info("🚀 Bot iniciado")
+            # Lanzar loop de notificaciones en background
+            asyncio.create_task(notify_handler.background_loop(app))
+            await asyncio.Event().wait()   # mantener vivo
+
     try:
-        app.run()
+        import asyncio
+        asyncio.run(run_bot())
     except KeyboardInterrupt:
         logger.info("\n👋 Bot detenido por el usuario")
     except Exception as e:
         logger.error(f"❌ Error fatal: {e}", exc_info=True)
+    
