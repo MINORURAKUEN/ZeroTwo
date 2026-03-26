@@ -20,7 +20,6 @@ def register(app, user_states, work_dir):
     async def anime_command(client, message: Message):
         """Comando /anime - Busca información de anime"""
         
-        # Obtener el nombre del anime
         args = message.text.split(maxsplit=1)
         
         if len(args) < 2:
@@ -40,7 +39,6 @@ def register(app, user_states, work_dir):
         status_msg = await message.reply_text("⏳ Buscando información del anime...")
         
         try:
-            # Query GraphQL para AniList
             query = """
             query ($search: String) {
                 Media (search: $search, type: ANIME) {
@@ -61,7 +59,6 @@ def register(app, user_states, work_dir):
             }
             """
             
-            # Hacer petición a la API de AniList
             cmd = [
                 'curl', '-s', '-X', 'POST',
                 'https://graphql.anilist.co',
@@ -79,7 +76,6 @@ def register(app, user_states, work_dir):
                 await status_msg.edit_text("❌ Error al buscar el anime. Intenta de nuevo.")
                 return
             
-            # Parsear respuesta JSON
             data = json.loads(result.stdout)
             
             if not data.get('data') or not data['data'].get('Media'):
@@ -88,7 +84,7 @@ def register(app, user_states, work_dir):
             
             anime = data['data']['Media']
             
-            # Traducciones
+            # --- DICCIONARIOS DE TRADUCCIÓN ---
             ESTADOS = {
                 'FINISHED': 'Finalizado',
                 'RELEASING': 'En emisión',
@@ -113,30 +109,50 @@ def register(app, user_states, work_dir):
                 'MUSIC': 'Musical',
                 'TV_SHORT': 'Serie Corta'
             }
+
+            GENEROS_TRAD = {
+                'Action': 'Acción',
+                'Adventure': 'Aventura',
+                'Comedy': 'Comedia',
+                'Drama': 'Drama',
+                'Ecchi': 'Ecchi',
+                'Fantasy': 'Fantasía',
+                'Horror': 'Terror',
+                'Mahou Shoujo': 'Magical Girls',
+                'Mecha': 'Mecha',
+                'Music': 'Música',
+                'Mystery': 'Misterio',
+                'Psychological': 'Psicológico',
+                'Romance': 'Romance',
+                'Sci-Fi': 'Ciencia Ficción',
+                'Slice of Life': 'Recuentos de la vida',
+                'Sports': 'Deportes',
+                'Supernatural': 'Sobrenatural',
+                'Thriller': 'Suspenso'
+            }
             
-            # Construir información
+            # --- PROCESAMIENTO ---
             titulo = anime['title']['romaji'] or anime['title']['english'] or anime['title']['native']
             titulo_ingles = anime['title'].get('english', '')
             titulo_nativo = anime['title'].get('native', '')
             
             estudios = ', '.join([s['name'] for s in anime['studios']['nodes']]) if anime['studios']['nodes'] else 'Desconocido'
-            generos = ', '.join(anime['genres']) if anime['genres'] else 'N/A'
             
-            # Limpiar sinopsis HTML
+            # Traducir géneros uno por uno
+            generos_lista = [GENEROS_TRAD.get(g, g) for g in anime['genres']]
+            generos = ', '.join(generos_lista) if generos_lista else 'N/A'
+            
             sinopsis = anime.get('description', 'No disponible')
             if sinopsis != 'No disponible':
                 sinopsis = re.sub(r'<[^>]+>', '', sinopsis).strip()
-                # Limitar sinopsis a 600 caracteres
                 if len(sinopsis) > 600:
                     sinopsis = sinopsis[:600] + '...'
                 
-                # Traducir sinopsis al español
                 try:
-                    # Usar MyMemory Translation API (gratis)
                     translate_cmd = [
                         'curl', '-s', '-G',
                         'https://api.mymemory.translated.net/get',
-                        '--data-urlencode', f'q={sinopsis[:500]}',  # Máximo 500 chars
+                        '--data-urlencode', f'q={sinopsis[:500]}',
                         '--data-urlencode', 'langpair=en|es'
                     ]
                     translate_result = subprocess.run(translate_cmd, capture_output=True, text=True, timeout=10)
@@ -146,47 +162,46 @@ def register(app, user_states, work_dir):
                         if translate_data.get('responseStatus') == 200:
                             sinopsis = translate_data['responseData']['translatedText']
                 except:
-                    pass  # Si falla la traducción, usar texto original
+                    pass
             
-            # Construir mensaje con TODO en negrita
-            info = f"""<b>✨ INFORMACIÓN DEL ANIME ✨</b>
+            titulo_bloque = ""
+            if titulo_ingles and titulo_ingles != titulo:
+                titulo_bloque += f"\n<b>🔤 Título inglés:</b> <b>{titulo_ingles}</b>"
+            if titulo_nativo and titulo_nativo != titulo:
+                titulo_bloque += f"\n<b>🈯 Título nativo:</b> <b>{titulo_nativo}</b>"
 
-<b>🈺 Título:</b> {titulo}
-{f'<b>🔤 Título inglés:</b> {titulo_ingles}' if titulo_ingles and titulo_ingles != titulo else ''}
-{f'<b>🈯 Título nativo:</b> {titulo_nativo}' if titulo_nativo and titulo_nativo != titulo else ''}
-<b>🏦 Estudio:</b> {estudios}
-<b>📆 Año:</b> {anime.get('seasonYear', 'N/A')}
-<b>🗂 Episodios:</b> {anime.get('episodes', 'En emisión')}
-<b>🏷 Géneros:</b> {generos}
-<b>⏱ Duración:</b> {anime.get('duration', 'N/A')} min
-<b>💽 Formato:</b> {FORMATOS.get(anime.get('format'), anime.get('format', 'N/A'))}
-<b>🔅 Temporada:</b> {TEMPORADAS.get(anime.get('season'), 'N/A')}
-<b>⏳ Estado:</b> {ESTADOS.get(anime.get('status'), anime.get('status', 'N/A'))}
-
-<b>📜 Sinopsis:</b>
-<blockquote>{sinopsis}</blockquote>"""
+            info = (
+                f"<b>✨ INFORMACIÓN DEL ANIME ✨</b>\n\n"
+                f"<b>🈺 Título:</b> <b>{titulo}</b>"
+                f"{titulo_bloque}\n"
+                f"<b>🏦 Estudio:</b> <b>{estudios}</b>\n"
+                f"<b>📆 Año:</b> <b>{anime.get('seasonYear', 'N/A')}</b>\n"
+                f"<b>🗂 Episodios:</b> <b>{anime.get('episodes', 'En emisión')}</b>\n"
+                f"<b>🏷 Géneros:</b> <b>{generos}</b>\n"
+                f"<b>⏱ Duración:</b> <b>{anime.get('duration', 'N/A')} min</b>\n"
+                f"<b>💽 Formato:</b> <b>{FORMATOS.get(anime.get('format'), anime.get('format', 'N/A'))}</b>\n"
+                f"<b>🔅 Temporada:</b> <b>{TEMPORADAS.get(anime.get('season'), 'N/A')}</b>\n"
+                f"<b>⏳ Estado:</b> <b>{ESTADOS.get(anime.get('status'), anime.get('status', 'N/A'))}</b>\n\n"
+                f"<b>📜 Sinopsis:</b>\n"
+                f"<blockquote>{sinopsis}</blockquote>"
+            )
             
-            # Obtener imagen
             image_url = anime['coverImage'].get('extraLarge') or anime.get('bannerImage') or anime['coverImage'].get('large')
             
             if image_url:
-                # Descargar imagen
                 img_cmd = ['curl', '-s', '-L', image_url]
                 img_result = subprocess.run(img_cmd, capture_output=True, timeout=30)
                 
                 if img_result.returncode == 0 and len(img_result.stdout) > 0:
-                    # Guardar imagen temporal
                     temp_img = work_dir / f"anime_{message.from_user.id}.jpg"
                     temp_img.write_bytes(img_result.stdout)
                     
-                    # Enviar con imagen
                     await message.reply_photo(
                         photo=str(temp_img),
                         caption=info,
                         parse_mode=enums.ParseMode.HTML
                     )
                     
-                    # Eliminar status y temp
                     await status_msg.delete()
                     temp_img.unlink()
                 else:
@@ -203,3 +218,4 @@ def register(app, user_states, work_dir):
                 f"Detalles: {str(e)[:100]}",
                 parse_mode=enums.ParseMode.HTML
             )
+            
