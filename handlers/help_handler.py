@@ -8,98 +8,115 @@ from pyrogram.types import Message
 
 def register(app):
     """Registra el handler del comando /help"""
-    
+
     @app.on_message(filters.command("help"))
     async def help_command(client, message: Message):
         """Comando /help - Ayuda detallada"""
-        
+
         help_text = """📖 <b>Ayuda Detallada</b>
 
-<b>PROCESAMIENTO DE VIDEOS:</b>
+━━━━━━━━━━━━━━━━━━━━
+🎬 <b>PROCESAMIENTO DE VIDEOS</b>
+━━━━━━━━━━━━━━━━━━━━
 
-<b>1️⃣ Comprimir Video:</b>
-- Envía /compress o envía un video directamente
-- Funciona con videos de cualquier tamaño ✨
-- Elige el formato y resolución
-- Los videos se envían como archivo descargable
+<b>1️⃣ Comprimir Video</b>
+├ /compress o envía un video directamente
+├ Sin límite de tamaño ✨
+├ Elige formato y resolución
+└ Se envía como archivo descargable
 
-<b>2️⃣ Añadir Portada:</b>
-- Envía /thumbnail
-- Envía el video
-- Envía la imagen para la portada
-- Recibe el video con portada
+<b>2️⃣ Añadir Portada (Thumbnail)</b>
+├ /thumbnail
+├ Envía primero la <b>foto</b>
+├ Luego envía el <b>video</b>
+└ Recibe el video con portada
 
-<b>3️⃣ Quemar Subtítulos:</b>
-- Envía /subtitles
-- Envía el video
-- Envía el archivo de subtítulos (.srt, .ass)
-- Recibe el video con subtítulos integrados
+<b>3️⃣ Quemar Subtítulos</b>
+├ /subtitles
+├ Envía el video
+├ Envía el archivo de subtítulos (.srt, .ass, .vtt)
+└ Recibe el video con subtítulos integrados
 
-<b>4️⃣ Extraer Audio:</b>
-- Envía /extract_audio
-- Envía el video
-- Recibe el archivo de audio en MP3
+<b>4️⃣ Extraer Audio</b>
+├ /extract_audio
+├ Envía el video
+└ Recibe el audio en MP3 (192kbps)
 
-<b>DESCARGAS DE REDES SOCIALES:</b>
+━━━━━━━━━━━━━━━━━━━━
+📥 <b>DESCARGAS</b>
+━━━━━━━━━━━━━━━━━━━━
 
-<b>5️⃣ YouTube:</b>
-- /play <nombre> - Descargar audio
-- /play2 <nombre> - Descargar video
-- /playaudio <nombre> - Audio como nota de voz
-- /ytmp3 <url> - Audio desde URL
-- /ytmp4 <url> - Video desde URL
-- Ejemplo: /play Linkin Park Numb
+<b>5️⃣ YouTube</b>
+├ /play &lt;nombre&gt; — Audio MP3
+├ /play2 &lt;nombre&gt; — Video MP4
+├ /playaudio &lt;nombre&gt; — Nota de voz
+├ /ytmp3 &lt;url&gt; — Audio desde URL
+└ /ytmp4 &lt;url&gt; — Video desde URL
 
-<b>6️⃣ Facebook:</b>
-- /fb <url> - Descargar video de Facebook
-- Ejemplo: /fb https://facebook.com/watch/?v=12345
+<b>6️⃣ Facebook</b>
+├ /fb &lt;url&gt;
+└ Ejemplo: /fb https://facebook.com/watch/?v=12345
 
-<b>7️⃣ Twitter/X:</b>
-- /x <url> - Descargar video o fotos de Twitter/X
-- Ejemplo: /x https://x.com/user/status/123456789
+<b>7️⃣ Twitter / X</b>
+├ /x &lt;url&gt;
+└ Descarga videos y fotos
 
-<b>8️⃣ Mejorar Imagen con IA:</b>
-- /enhance, /hd o /remini
-- Responde a una foto o envíala adjunta
-- Aplica upscale 4x con IA
-- Ejemplo: /enhance (respondiendo a una imagen)
+<b>8️⃣ TikTok</b>
+├ /tiktok &lt;url&gt; — Sin marca de agua, calidad HD
+└ Alias: /ttdl /tt /tiktoknowm
 
-<b>9️⃣ MEGA/MediaFire/Drive:</b>
-- Envía /download o pega directamente el enlace
-- Servicios soportados:
-  🔷 MEGA (mega.nz, mega.co.nz)
-  🔶 MediaFire (mediafire.com)
-  ☁️ Google Drive (/gdrive <url>)
-  📤 Subir a Drive (/gdrive_upload)
+<b>9️⃣ MEGA / MediaFire / Google Drive</b>
+├ Pega el enlace directamente o usa:
+├ 🔷 MEGA — mega.nz
+├ 🔶 MediaFire — mediafire.com
+├ ☁️ /gdrive &lt;url_o_id&gt; — Descargar de Drive
+└ 📤 /gdrive_upload [folder_id] — Subir a Drive
 
-<b>BÚSQUEDA:</b>
+━━━━━━━━━━━━━━━━━━━━
+🤖 <b>HERRAMIENTAS IA</b>
+━━━━━━━━━━━━━━━━━━━━
 
-<b>🔟 Buscar Anime:</b>
-- Envía /anime Nombre del anime
-- Obtén información completa con imagen
-- Ejemplo: /anime One Piece
+<b>🔟 Mejorar Imagen con IA</b>
+├ /enhance, /hd o /remini
+├ Envía la foto con el comando como caption
+├ O responde a una foto con el comando
+├ O escribe /hd y luego envía la foto
+└ ✨ Upscale 4x — mejora resolución y nitidez
 
-<b>Ejemplos de enlaces:</b>
-• YouTube: youtube.com/watch?v=abc123
-• Facebook: facebook.com/watch/?v=12345
-• Twitter: x.com/user/status/123456789
-• MEGA: mega.nz/file/abc123#xyz789
-• MediaFire: mediafire.com/file/abc123/archivo.zip
+━━━━━━━━━━━━━━━━━━━━
+🔔 <b>NOTIFICACIONES DE ANIME</b>
+━━━━━━━━━━━━━━━━━━━━
 
-<b>Formatos soportados:</b>
-- Descargas: Videos se envían como video reproducible
-- Compresión: Videos se envían como archivo descargable
-- Subtítulos: SRT, ASS, VTT
-- Imágenes: JPG, PNG
-- Audio: MP3, M4A, WAV, OGG, FLAC
+<b>1️⃣1️⃣ Notificaciones de Streaming</b>
+├ /notify on           — Activar notificaciones
+├ /notify off          — Desactivar
+├ /notify status       — Ver estado actual
+├ /notify add &lt;anime&gt;  — Suscribirse a un anime
+├ /notify list         — Ver suscripciones
+├ /notify remove &lt;n&gt;  — Eliminar suscripción
+├ /notify now          — Revisar episodios ahora
+├ 📡 Fuente: LiveChart.me
+└ ⏱ Revisión automática cada 10 minutos
 
-<b>Límites:</b>
-- Videos: Sin límite de tamaño para descargar ✨
-- Archivos procesados: Máx. 2GB para enviar (límite de Telegram)
-- Tiempo de procesamiento: Depende del tamaño
+━━━━━━━━━━━━━━━━━━━━
+🔍 <b>BÚSQUEDA</b>
+━━━━━━━━━━━━━━━━━━━━
 
-<b>💡 Tip:</b> Ahora puedes descargar de YouTube, Facebook y Twitter!
+<b>1️⃣2️⃣ Buscar Anime</b>
+├ /anime &lt;nombre&gt;
+├ Info completa: estudio, géneros, sinopsis traducida
+└ Ejemplo: /anime Berserk
 
-¿Necesitas ayuda? Contáctame con /start"""
-        
+━━━━━━━━━━━━━━━━━━━━
+📋 <b>FORMATOS SOPORTADOS</b>
+━━━━━━━━━━━━━━━━━━━━
+• <b>Video:</b> MP4, MKV, AVI, MOV, WEBM
+• <b>Audio:</b> MP3, M4A, WAV, OGG, FLAC
+• <b>Subtítulos:</b> SRT, ASS, VTT
+• <b>Imagen:</b> JPG, PNG
+
+<b>⚠️ Límite Telegram:</b> 2GB por archivo
+
+<b>💡 Tip:</b> Todos los videos descargados muestran un preview con screenshots automáticos 📸"""
+
         await message.reply_text(help_text, parse_mode=enums.ParseMode.HTML)
