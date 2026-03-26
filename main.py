@@ -140,8 +140,24 @@ if __name__ == '__main__':
     logger.info("⏸️ Presiona Ctrl+C para detener")
     logger.info("=" * 60)
     
+    async def main():
+        await app.start()
+        logger.info("🚀 Bot iniciado correctamente")
+
+        # Lanzar loop de notificaciones dentro del loop de Pyrogram
+        import asyncio
+        asyncio.get_event_loop().create_task(
+            notify_handler.background_loop(app)
+        )
+        logger.info("🔔 Loop de notificaciones lanzado")
+
+        from pyrogram.idle import idle
+        await idle()
+        await app.stop()
+
     try:
-        app.run()
+        import asyncio
+        app.loop.run_until_complete(main())
     except KeyboardInterrupt:
         logger.info("\n👋 Bot detenido por el usuario")
     except Exception as e:
