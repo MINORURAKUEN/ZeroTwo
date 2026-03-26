@@ -84,52 +84,11 @@ def register(app, user_states, work_dir):
             
             anime = data['data']['Media']
             
-            # --- DICCIONARIOS DE TRADUCCIÓN ---
-            ESTADOS = {
-                'FINISHED': 'Finalizado',
-                'RELEASING': 'En emisión',
-                'NOT_YET_RELEASED': 'Próximamente',
-                'CANCELLED': 'Cancelado',
-                'HIATUS': 'En pausa'
-            }
-            
-            TEMPORADAS = {
-                'WINTER': 'Invierno',
-                'SPRING': 'Primavera',
-                'SUMMER': 'Verano',
-                'FALL': 'Otoño'
-            }
-            
-            FORMATOS = {
-                'TV': 'Serie de TV',
-                'MOVIE': 'Película',
-                'SPECIAL': 'Especial',
-                'OVA': 'OVA',
-                'ONA': 'ONA',
-                'MUSIC': 'Musical',
-                'TV_SHORT': 'Serie Corta'
-            }
-
-            GENEROS_TRAD = {
-                'Action': 'Acción',
-                'Adventure': 'Aventura',
-                'Comedy': 'Comedia',
-                'Drama': 'Drama',
-                'Ecchi': 'Ecchi',
-                'Fantasy': 'Fantasía',
-                'Horror': 'Terror',
-                'Mahou Shoujo': 'Magical Girls',
-                'Mecha': 'Mecha',
-                'Music': 'Música',
-                'Mystery': 'Misterio',
-                'Psychological': 'Psicológico',
-                'Romance': 'Romance',
-                'Sci-Fi': 'Ciencia Ficción',
-                'Slice of Life': 'Recuentos de la vida',
-                'Sports': 'Deportes',
-                'Supernatural': 'Sobrenatural',
-                'Thriller': 'Suspenso'
-            }
+            # --- TRADUCCIONES ---
+            ESTADOS = {'FINISHED': 'Finalizado', 'RELEASING': 'En emisión', 'NOT_YET_RELEASED': 'Próximamente', 'CANCELLED': 'Cancelado', 'HIATUS': 'En pausa'}
+            TEMPORADAS = {'WINTER': 'Invierno', 'SPRING': 'Primavera', 'SUMMER': 'Verano', 'FALL': 'Otoño'}
+            FORMATOS = {'TV': 'Serie de TV', 'MOVIE': 'Película', 'SPECIAL': 'Especial', 'OVA': 'OVA', 'ONA': 'ONA', 'MUSIC': 'Musical', 'TV_SHORT': 'Serie Corta'}
+            GENEROS_TRAD = {'Action': 'Acción', 'Adventure': 'Aventura', 'Comedy': 'Comedia', 'Drama': 'Drama', 'Ecchi': 'Ecchi', 'Fantasy': 'Fantasía', 'Horror': 'Terror', 'Mahou Shoujo': 'Magical Girls', 'Mecha': 'Mecha', 'Music': 'Música', 'Mystery': 'Misterio', 'Psychological': 'Psicológico', 'Romance': 'Romance', 'Sci-Fi': 'Ciencia Ficción', 'Slice of Life': 'Recuentos de la vida', 'Sports': 'Deportes', 'Supernatural': 'Sobrenatural', 'Thriller': 'Suspenso'}
             
             # --- PROCESAMIENTO ---
             titulo = anime['title']['romaji'] or anime['title']['english'] or anime['title']['native']
@@ -137,33 +96,21 @@ def register(app, user_states, work_dir):
             titulo_nativo = anime['title'].get('native', '')
             
             estudios = ', '.join([s['name'] for s in anime['studios']['nodes']]) if anime['studios']['nodes'] else 'Desconocido'
-            
-            generos_lista = [GENEROS_TRAD.get(g, g) for g in anime['genres']]
-            generos = ', '.join(generos_lista) if generos_lista else 'N/A'
+            generos = ', '.join([GENEROS_TRAD.get(g, g) for g in anime['genres']]) if anime['genres'] else 'N/A'
             
             sinopsis = anime.get('description', 'No disponible')
             if sinopsis != 'No disponible':
                 sinopsis = re.sub(r'<[^>]+>', '', sinopsis).strip()
-                # Recorte preventivo para no exceder los 1024 chars de Telegram en captions
-                if len(sinopsis) > 400:
-                    sinopsis = sinopsis[:400] + '...'
-                
+                # Sin límite de caracteres aquí, solo traducción
                 try:
-                    translate_cmd = [
-                        'curl', '-s', '-G',
-                        'https://api.mymemory.translated.net/get',
-                        '--data-urlencode', f'q={sinopsis[:500]}',
-                        '--data-urlencode', 'langpair=en|es'
-                    ]
+                    translate_cmd = ['curl', '-s', '-G', 'https://api.mymemory.translated.net/get', '--data-urlencode', f'q={sinopsis[:500]}', '--data-urlencode', 'langpair=en|es']
                     translate_result = subprocess.run(translate_cmd, capture_output=True, text=True, timeout=10)
-                    
                     if translate_result.returncode == 0:
                         translate_data = json.loads(translate_result.stdout)
                         if translate_data.get('responseStatus') == 200:
                             sinopsis = translate_data['responseData']['translatedText']
-                except:
-                    pass
-            
+                except: pass
+
             titulo_bloque = ""
             if titulo_ingles and titulo_ingles != titulo:
                 titulo_bloque += f"\n<b>🔤 Título inglés:</b> <b>{titulo_ingles}</b>"
@@ -196,11 +143,12 @@ def register(app, user_states, work_dir):
                     temp_img = work_dir / f"anime_{message.from_user.id}.jpg"
                     temp_img.write_bytes(img_result.stdout)
                     
-                    await message.reply_photo(
-                        photo=str(temp_img),
-                        caption=info,
-                        parse_mode=enums.ParseMode.HTML
-                    )
+                    # Lógica de división si el mensaje es muy largo para una foto
+                    if len(info) > 1024:
+                        await message.reply_photo(photo=str(temp_img))
+                        await message.reply_text(info, parse_mode=enums.ParseMode.HTML)
+                    else:
+                        await message.reply_photo(photo=str(temp_img), caption=info, parse_mode=enums.ParseMode.HTML)
                     
                     await status_msg.delete()
                     temp_img.unlink()
@@ -209,13 +157,7 @@ def register(app, user_states, work_dir):
             else:
                 await status_msg.edit_text(info, parse_mode=enums.ParseMode.HTML)
             
-            logger.info(f"✅ Anime encontrado: {titulo}")
-            
         except Exception as e:
-            logger.error(f"❌ Error buscando anime: {e}", exc_info=True)
-            await status_msg.edit_text(
-                f"❌ <b>Error al buscar el anime</b>\n\n"
-                f"Detalles: {str(e)[:100]}",
-                parse_mode=enums.ParseMode.HTML
-            )
-            
+            logger.error(f"❌ Error: {e}")
+            await status_msg.edit_text(f"❌ <b>Error</b>\n\n{str(e)[:100]}", parse_mode=enums.ParseMode.HTML)
+                    
