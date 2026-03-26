@@ -19,7 +19,10 @@ from . import (
     photo_handler,
     document_handler,
     url_handler,
-    button_callback_handler
+    button_callback_handler,
+    drive_handler,
+    enhance_handler,
+    notify_handler,
 )
 
 __all__ = [
@@ -39,5 +42,8 @@ __all__ = [
     'photo_handler',
     'document_handler',
     'url_handler',
-    'button_callback_handler'
+    'button_callback_handler',
+    'drive_handler',
+    'enhance_handler',
+    'notify_handler',
 ]
