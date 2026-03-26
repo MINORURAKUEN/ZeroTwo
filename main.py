@@ -151,7 +151,7 @@ if __name__ == '__main__':
         )
         logger.info("🔔 Loop de notificaciones lanzado")
 
-        from pyrogram.idle import idle
+        from pyrogram import idle
         await idle()
         await app.stop()
 
