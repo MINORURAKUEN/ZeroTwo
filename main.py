@@ -140,18 +140,9 @@ if __name__ == '__main__':
     logger.info("⏸️ Presiona Ctrl+C para detener")
     logger.info("=" * 60)
     
-    async def run_bot():
-        async with app:
-            logger.info("🚀 Bot iniciado")
-            # Lanzar loop de notificaciones en background
-            asyncio.create_task(notify_handler.background_loop(app))
-            await asyncio.Event().wait()   # mantener vivo
-
     try:
-        import asyncio
-        asyncio.run(run_bot())
+        app.run()
     except KeyboardInterrupt:
         logger.info("\n👋 Bot detenido por el usuario")
     except Exception as e:
         logger.error(f"❌ Error fatal: {e}", exc_info=True)
-    
