@@ -299,15 +299,9 @@ async def background_loop(app):
 # ── Registro de comandos ───────────────────────────────────────────────────────
 
 def register(app):
-    """Registra comandos /notify y arranca el loop dentro del loop de Pyrogram."""
+    """Registra los comandos /notify. El loop se lanza desde main.py."""
 
     data = _load_data()
-
-    @app.on_start()
-    async def _start_notify_loop(client):
-        """Se ejecuta dentro del loop de Pyrogram al arrancar el bot."""
-        asyncio.create_task(background_loop(app))
-        logger.info("🔔 Loop de notificaciones iniciado correctamente")
 
     @app.on_message(filters.command("notify"))
     async def notify_command(client, message: Message):
