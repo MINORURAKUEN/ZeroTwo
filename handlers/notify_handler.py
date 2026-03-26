@@ -299,9 +299,15 @@ async def background_loop(app):
 # ── Registro de comandos ───────────────────────────────────────────────────────
 
 def register(app):
-    """Registra solo los comandos /notify. El loop se inicia desde main.py."""
+    """Registra comandos /notify y arranca el loop dentro del loop de Pyrogram."""
 
     data = _load_data()
+
+    @app.on_start()
+    async def _start_notify_loop(client):
+        """Se ejecuta dentro del loop de Pyrogram al arrancar el bot."""
+        asyncio.create_task(background_loop(app))
+        logger.info("🔔 Loop de notificaciones iniciado correctamente")
 
     @app.on_message(filters.command("notify"))
     async def notify_command(client, message: Message):
@@ -431,4 +437,3 @@ def register(app):
                 "Con /notify add: solo los animes elegidos.</i>",
                 parse_mode=enums.ParseMode.HTML
       )
-          
