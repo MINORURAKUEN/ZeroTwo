@@ -138,15 +138,15 @@ def register(app, user_states, work_dir):
             
             estudios = ', '.join([s['name'] for s in anime['studios']['nodes']]) if anime['studios']['nodes'] else 'Desconocido'
             
-            # Traducir géneros uno por uno
             generos_lista = [GENEROS_TRAD.get(g, g) for g in anime['genres']]
             generos = ', '.join(generos_lista) if generos_lista else 'N/A'
             
             sinopsis = anime.get('description', 'No disponible')
             if sinopsis != 'No disponible':
                 sinopsis = re.sub(r'<[^>]+>', '', sinopsis).strip()
-                if len(sinopsis) > 600:
-                    sinopsis = sinopsis[:600] + '...'
+                # Recorte preventivo para no exceder los 1024 chars de Telegram en captions
+                if len(sinopsis) > 400:
+                    sinopsis = sinopsis[:400] + '...'
                 
                 try:
                     translate_cmd = [
@@ -183,7 +183,7 @@ def register(app, user_states, work_dir):
                 f"<b>🔅 Temporada:</b> <b>{TEMPORADAS.get(anime.get('season'), 'N/A')}</b>\n"
                 f"<b>⏳ Estado:</b> <b>{ESTADOS.get(anime.get('status'), anime.get('status', 'N/A'))}</b>\n\n"
                 f"<b>📜 Sinopsis:</b>\n"
-                f"<blockquote>{sinopsis}</blockquote>"
+                f"<blockquote><b>{sinopsis}</b></blockquote>"
             )
             
             image_url = anime['coverImage'].get('extraLarge') or anime.get('bannerImage') or anime['coverImage'].get('large')
