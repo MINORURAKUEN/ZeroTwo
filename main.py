@@ -7,8 +7,10 @@ GitHub: https://github.com/MINORURAKUEN/Rikka-Bot
 
 import os
 import logging
+import asyncio
+import subprocess
 from pathlib import Path
-from pyrogram import Client
+from pyrogram import Client, idle
 
 # Configuración de logging
 logging.basicConfig(
@@ -42,9 +44,6 @@ DOWNLOAD_DIR = Path.home() / 'telegram_downloads'
 WORK_DIR.mkdir(exist_ok=True)
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-logger.info("📁 Directorio de trabajo: %s", WORK_DIR)
-logger.info("📥 Directorio de descargas: %s", DOWNLOAD_DIR)
-
 # Crear cliente de Pyrogram
 app = Client(
     "video_bot",
@@ -53,40 +52,28 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-# Estado de usuarios (DEFINIR ANTES DE IMPORTAR HANDLERS)
+# Estado de usuarios
 user_states = {}
 
 # Importar handlers
 from handlers import (
-    start_handler,
-    help_handler,
-    compress_handler,
-    thumbnail_handler,
-    subtitles_handler,
-    extract_audio_handler,
-    download_handler,
-    anime_handler,
-    youtube_handler,
-    facebook_handler,
-    twitter_handler,
-    tiktok_handler,
-    video_handler,
-    photo_handler,
-    document_handler,
-    url_handler,
-    button_callback_handler,
-    drive_handler,
-    enhance_handler,
-    notify_handler
+    start_handler, help_handler, compress_handler,
+    thumbnail_handler, subtitles_handler, extract_audio_handler,
+    download_handler, anime_handler, youtube_handler,
+    facebook_handler, twitter_handler, tiktok_handler,
+    video_handler, photo_handler, document_handler,
+    url_handler, button_callback_handler, drive_handler,
+    enhance_handler, notify_handler
 )
 
-# Registrar handlers
+# --- REGISTRO DE HANDLERS ---
+# Se corrigieron los argumentos pasando WORK_DIR donde era requerido
 start_handler.register(app)
 help_handler.register(app)
-compress_handler.register(app, user_states)
-thumbnail_handler.register(app, user_states)
-subtitles_handler.register(app, user_states)
-extract_audio_handler.register(app, user_states)
+compress_handler.register(app, user_states, WORK_DIR) # Añadido WORK_DIR
+thumbnail_handler.register(app, user_states, WORK_DIR) # CORRECCIÓN AQUÍ ✅
+subtitles_handler.register(app, user_states, WORK_DIR) # Añadido WORK_DIR
+extract_audio_handler.register(app, user_states, WORK_DIR) # Añadido WORK_DIR
 download_handler.register(app)
 anime_handler.register(app, user_states, WORK_DIR)
 youtube_handler.register(app, DOWNLOAD_DIR)
@@ -102,63 +89,59 @@ drive_handler.register(app, user_states, DOWNLOAD_DIR)
 enhance_handler.register(app, user_states, WORK_DIR)
 notify_handler.register(app)
 
-if __name__ == '__main__':
-    logger.info("=" * 60)
-    logger.info("🤖 BOT DE TELEGRAM - PROCESAMIENTO DE VIDEOS")
-    logger.info("=" * 60)
-    logger.info("🔧 Versión: Pyrogram (Sin límite de tamaño)")
-    logger.info("📁 Directorio de trabajo: %s", WORK_DIR)
-    logger.info("📥 Directorio de descargas: %s", DOWNLOAD_DIR)
-    logger.info("📝 Log guardado en: bot.log")
-    logger.info("=" * 60)
-    
-    # Verificar herramientas
+async def check_tools():
+    """Verifica si las herramientas externas están instaladas"""
     logger.info("🔍 Verificando herramientas necesarias...")
-    
-    import subprocess
     tools = {
         'FFmpeg': 'ffmpeg',
         'FFprobe': 'ffprobe',
         'Megatools': 'megadl',
         'Wget': 'wget'
     }
-    
     for name, cmd in tools.items():
         try:
-            result = subprocess.run([cmd, '--version'], 
-                                   capture_output=True, 
-                                   timeout=5)
-            if result.returncode == 0:
+            proc = await asyncio.create_subprocess_exec(
+                cmd, '--version',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await proc.wait()
+            if proc.returncode == 0:
                 logger.info(f"✅ {name}: Instalado")
             else:
                 logger.warning(f"⚠️ {name}: No disponible")
-        except:
+        except Exception:
             logger.warning(f"⚠️ {name}: No disponible")
-    
+
+async def main():
     logger.info("=" * 60)
+    logger.info("🤖 BOT DE TELEGRAM - RIKKA BOT INICIANDO")
+    logger.info("=" * 60)
+    
+    await check_tools()
+    
+    # Iniciar cliente
+    await app.start()
+    
+    # Lanzar loop de notificaciones en segundo plano
+    asyncio.create_task(notify_handler.background_loop(app))
+    logger.info("🔔 Loop de notificaciones lanzado")
+    
     logger.info("🚀 Bot iniciado correctamente")
     logger.info("⏸️ Presiona Ctrl+C para detener")
     logger.info("=" * 60)
     
-    async def main():
-        await app.start()
-        logger.info("🚀 Bot iniciado correctamente")
+    # Mantener el bot corriendo
+    await idle()
+    
+    # Detener con gracia
+    await app.stop()
 
-        # Lanzar loop de notificaciones dentro del loop de Pyrogram
-        import asyncio
-        asyncio.get_event_loop().create_task(
-            notify_handler.background_loop(app)
-        )
-        logger.info("🔔 Loop de notificaciones lanzado")
-
-        from pyrogram import idle
-        await idle()
-        await app.stop()
-
+if __name__ == '__main__':
     try:
-        import asyncio
-        app.loop.run_until_complete(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("\n👋 Bot detenido por el usuario")
     except Exception as e:
         logger.error(f"❌ Error fatal: {e}", exc_info=True)
+    
