@@ -84,7 +84,13 @@ def register(app, user_states, work_dir):
                 str(optimized_image)
             ]
             
-            subprocess.run(optimize_cmd, capture_output=True, timeout=10, check=True)
+            subprocess.run(
+                optimize_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=True
+            )
             
             if optimized_image.exists():
                 logger.info(f"✅ Imagen optimizada: {optimized_image.stat().st_size / 1024:.2f} KB")
@@ -205,12 +211,12 @@ def register(app, user_states, work_dir):
             
             logger.info("⚡ Ejecutando FFmpeg (ultra rápido - sin recodificar)")
             
-            # Ejecutar comando
+            # Ejecutar comando — Fix: usar stdout/stderr por separado, NO capture_output
             result = subprocess.run(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=60  # Solo 60 segundos
+                timeout=60
             )
             
             if result.returncode != 0:
@@ -271,4 +277,4 @@ def register(app, user_states, work_dir):
             logger.error(f"❌ Error: {e}", exc_info=True)
             await status_msg.edit_text(f"❌ <b>Error:</b> {str(e)}", parse_mode=enums.ParseMode.HTML)
             del user_states[user_id]
-        
+          
