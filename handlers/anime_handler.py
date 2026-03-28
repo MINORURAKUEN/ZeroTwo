@@ -17,14 +17,15 @@ logger = logging.getLogger(__name__)
 # Helpers de red
 # ─────────────────────────────────────────────
 
-def _curl_get(url: str, timeout: int = 15, extra_args: list = None) -> str | None:
+def _curl_get(url: str, timeout: int = 15) -> str | None:
     """GET simple con curl, devuelve stdout o None."""
-    cmd = ['curl', '-s', '-L',
-           '-A', 'Mozilla/5.0 (compatible; ZeroTwoBot/1.0)',
-           '--max-time', str(timeout),
-           url]
-    if extra_args:
-        cmd += extra_args
+    cmd = [
+        'curl', '-s', '-L',
+        '-A', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/122.0 Safari/537.36',
+        '--max-time', str(timeout),
+        '-H', 'Accept-Language: es,en;q=0.9',
+        url
+    ]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         return r.stdout if r.returncode == 0 else None
@@ -50,64 +51,157 @@ def _curl_post_json(url: str, payload: dict, timeout: int = 15) -> str | None:
         return None
 
 
+def _clean_html(text: str) -> str:
+    """Elimina etiquetas HTML y decodifica entidades básicas."""
+    text = re.sub(r'<[^>]+>', '', text)
+    text = (text.replace('&#39;', "'").replace('&amp;', '&')
+                .replace('&quot;', '"').replace('&lt;', '<')
+                .replace('&gt;', '>').replace('&nbsp;', ' '))
+    return text.strip()
+
+
 # ─────────────────────────────────────────────
-# Sinopsis desde Anime-Planet
+# Sinopsis — fuentes en cascada
 # ─────────────────────────────────────────────
 
-def _get_animeplanet_synopsis(title: str) -> str | None:
+def _synopsis_from_animeplanet(title: str) -> str | None:
     """
-    Busca el anime en Anime-Planet y extrae la sinopsis.
-    Devuelve el texto en inglés (sin HTML) o None.
+    Busca en Anime-Planet y extrae la sinopsis del cuerpo de la página.
+    El <meta description> es genérico del sitio, así que buscamos en el HTML.
     """
-    # 1) Búsqueda en Anime-Planet
     slug_query = title.replace(' ', '+')
     search_url = f"https://www.anime-planet.com/anime/all?name={slug_query}"
     html = _curl_get(search_url, timeout=15)
     if not html:
         return None
 
-    # Extraer primer enlace de resultado: /anime/<slug>
-    match = re.search(r'href="(/anime/[a-z0-9\-]+)"', html)
+    # Primer enlace de resultado de tipo /anime/<slug> (no /manga/)
+    match = re.search(r'href="(/anime/[a-z0-9][a-z0-9\-]+)"', html)
     if not match:
+        logger.info("Anime-Planet: no se encontró enlace de resultado")
         return None
 
-    anime_path = match.group(1)
-    anime_url = f"https://www.anime-planet.com{anime_path}"
+    anime_url = f"https://www.anime-planet.com{match.group(1)}"
+    logger.info(f"Anime-Planet URL: {anime_url}")
 
-    # 2) Página del anime
     anime_html = _curl_get(anime_url, timeout=15)
     if not anime_html:
         return None
 
-    # Extraer sinopsis: <meta itemprop="description" content="...">
-    meta_match = re.search(
-        r'<meta\s+itemprop=["\']description["\']\s+content=["\'](.*?)["\']',
-        anime_html, re.DOTALL
-    )
-    if meta_match:
-        synopsis = meta_match.group(1).strip()
-        synopsis = re.sub(r'<[^>]+>', '', synopsis)
-        synopsis = synopsis.replace('&#39;', "'").replace('&amp;', '&').replace('&quot;', '"').replace('&lt;', '<').replace('&gt;', '>')
-        return synopsis if len(synopsis) > 20 else None
+    # ── Selector 1: <div class="entrySynopsis"> ──
+    m = re.search(r'class=["\'][^"\']*entrySynopsis[^"\']*["\'][^>]*>(.*?)</div>',
+                  anime_html, re.DOTALL | re.IGNORECASE)
+    if m:
+        text = _clean_html(m.group(1))
+        if len(text) > 30:
+            return text
 
-    # Fallback: <div itemprop="description">
-    div_match = re.search(
-        r'<div[^>]+itemprop=["\']description["\'][^>]*>(.*?)</div>',
-        anime_html, re.DOTALL
-    )
-    if div_match:
-        synopsis = re.sub(r'<[^>]+>', '', div_match.group(1)).strip()
-        return synopsis if len(synopsis) > 20 else None
+    # ── Selector 2: <p itemprop="description"> ──
+    m = re.search(r'<p[^>]+itemprop=["\']description["\'][^>]*>(.*?)</p>',
+                  anime_html, re.DOTALL | re.IGNORECASE)
+    if m:
+        text = _clean_html(m.group(1))
+        if len(text) > 30:
+            return text
 
+    # ── Selector 3: bloque "synopsis" genérico ──
+    m = re.search(r'id=["\']synopsis["\'][^>]*>.*?<p[^>]*>(.*?)</p>',
+                  anime_html, re.DOTALL | re.IGNORECASE)
+    if m:
+        text = _clean_html(m.group(1))
+        if len(text) > 30:
+            return text
+
+    logger.info("Anime-Planet: página encontrada pero no se extrajo sinopsis")
     return None
 
 
+def _synopsis_from_livechart(title: str) -> str | None:
+    """Busca en LiveChart.me y extrae la sinopsis."""
+    encoded = title.replace(' ', '+')
+    search_url = f"https://www.livechart.me/search?q={encoded}"
+    html = _curl_get(search_url, timeout=15)
+    if not html:
+        return None
+
+    # Primer enlace /anime/<id>
+    m = re.search(r'href="(/anime/\d+)"', html)
+    if not m:
+        return None
+
+    anime_url = f"https://www.livechart.me{m.group(1)}"
+    anime_html = _curl_get(anime_url, timeout=15)
+    if not anime_html:
+        return None
+
+    # Bloque de sinopsis en LiveChart
+    m = re.search(r'class=["\'][^"\']*synopsis[^"\']*["\'][^>]*>(.*?)</(?:p|div|section)>',
+                  anime_html, re.DOTALL | re.IGNORECASE)
+    if m:
+        text = _clean_html(m.group(1))
+        if len(text) > 30:
+            return text
+    return None
+
+
+def _synopsis_from_animeschedule(title: str) -> str | None:
+    """Busca en AnimeSchedule.net y extrae la sinopsis."""
+    # AnimeSchedule tiene una API JSON pública
+    encoded = title.replace(' ', '%20')
+    api_url = f"https://animeschedule.net/api/v3/anime?q={encoded}&limit=1"
+    raw = _curl_get(api_url, timeout=15)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        items = data.get('anime') or data  # puede ser lista directa
+        if isinstance(items, list) and items:
+            synopsis = items[0].get('synopsis') or items[0].get('description')
+            if synopsis and len(synopsis) > 30:
+                return _clean_html(synopsis)
+    except Exception:
+        pass
+    return None
+
+
+def _get_synopsis(title: str, anilist_description: str | None) -> tuple[str, str]:
+    """
+    Intenta obtener sinopsis en cascada:
+      1. Anime-Planet
+      2. LiveChart
+      3. AnimeSchedule
+      4. AniList (fallback)
+    Devuelve (sinopsis_en_ingles, nombre_fuente).
+    """
+    logger.info("Intentando sinopsis desde Anime-Planet...")
+    text = _synopsis_from_animeplanet(title)
+    if text:
+        return text, "Anime-Planet"
+
+    logger.info("Intentando sinopsis desde LiveChart...")
+    text = _synopsis_from_livechart(title)
+    if text:
+        return text, "LiveChart"
+
+    logger.info("Intentando sinopsis desde AnimeSchedule...")
+    text = _synopsis_from_animeschedule(title)
+    if text:
+        return text, "AnimeSchedule"
+
+    # Fallback: AniList
+    if anilist_description and anilist_description != 'No disponible':
+        text = _clean_html(anilist_description)
+        return text, "AniList"
+
+    return "No disponible", ""
+
+
 # ─────────────────────────────────────────────
-# Traducción de sinopsis
+# Traducción
 # ─────────────────────────────────────────────
 
 def _translate_to_spanish(text: str) -> str:
-    """Traduce texto al español vía MyMemory. Devuelve original si falla."""
+    """Traduce al español vía MyMemory. Devuelve el original si falla."""
     snippet = text[:500]
     cmd = [
         'curl', '-s', '-G',
@@ -140,47 +234,41 @@ _LAT_DUB_SITES = [
 _LAT_DUB_KEYWORDS = [
     'doblaje latino', 'dub latino', 'latino dub',
     'español latino', 'audio latino', 'doblado al español',
-    'latin dub', 'spanish dub',
+    'latin dub', 'spanish dub', 'doblado',
 ]
 
 
 def _check_latin_dub(title: str) -> tuple[str, str]:
     """
-    Busca indicios de doblaje latino para el anime.
-    Devuelve (estado, fuente):
-        estado: '✅ Disponible' | '📢 Anunciado' | '❌ No confirmado'
-        fuente: nombre del sitio o cadena vacía
+    Detecta si el anime tiene doblaje latino.
+    Devuelve (estado_emoji_texto, fuente).
     """
     encoded = '+'.join(title.split())
 
-    # ── Estrategia 1: DuckDuckGo HTML (no requiere API key) ──
+    # ── 1) DuckDuckGo HTML ──
     ddg_url = f"https://html.duckduckgo.com/html/?q={encoded}+doblaje+latino+anime"
     ddg_html = _curl_get(ddg_url, timeout=15)
-
     if ddg_html:
         combined = ddg_html.lower()
-        # ¿Hay resultado de algún sitio de doblaje conocido?
         found_site = next((s for s in _LAT_DUB_SITES if s in combined), '')
         found_keyword = any(kw in combined for kw in _LAT_DUB_KEYWORDS)
-
         if found_keyword and found_site:
-            # Distinguir "disponible" de "anunciado"
-            if any(w in combined for w in ['disponible', 'ya disponible', 'puedes ver', 'ver ahora']):
+            if any(w in combined for w in ['disponible', 'ya disponible', 'ver ahora', 'puedes ver']):
                 return '✅ Disponible', found_site
-            elif any(w in combined for w in ['anunciado', 'próximamente', 'soon', 'confirmed', 'confirmado']):
+            elif any(w in combined for w in ['anunciado', 'próximamente', 'soon', 'confirmado', 'confirmed']):
                 return '📢 Anunciado', found_site
             else:
                 return '✅ Disponible', found_site
         elif found_keyword:
             return '📢 Anunciado', 'varios sitios'
 
-    # ── Estrategia 2: Buscar directamente en Crunchyroll ──
+    # ── 2) Crunchyroll ──
     cr_url = f"https://www.crunchyroll.com/search?q={encoded}"
     cr_html = _curl_get(cr_url, timeout=15)
     if cr_html and 'español (latino)' in cr_html.lower():
         return '✅ Disponible', 'Crunchyroll'
 
-    # ── Estrategia 3: AnimeFlv (popular en LATAM) ──
+    # ── 3) AnimeFlv ──
     flv_url = f"https://www3.animeflv.net/browse?q={encoded}"
     flv_html = _curl_get(flv_url, timeout=15)
     if flv_html:
@@ -189,6 +277,17 @@ def _check_latin_dub(title: str) -> tuple[str, str]:
             return '✅ Disponible', 'AnimeFlv'
 
     return '❌ No confirmado', ''
+
+
+# ─────────────────────────────────────────────
+# Formateo de campos que pueden ser None
+# ─────────────────────────────────────────────
+
+def _fmt(value, suffix: str = '', fallback: str = 'N/A') -> str:
+    """Formatea un valor que puede ser None."""
+    if value is None or value == 'None':
+        return fallback
+    return f"{value}{suffix}"
 
 
 # ─────────────────────────────────────────────
@@ -217,7 +316,6 @@ def register(app, user_states, work_dir):
 
         anime_name = args[1]
         logger.info(f"🈺 Buscando anime: {anime_name}")
-
         status_msg = await message.reply_text("⏳ Buscando información del anime...")
 
         try:
@@ -255,8 +353,10 @@ def register(app, user_states, work_dir):
             data = json.loads(raw)
 
             if not data.get('data') or not data['data'].get('Media'):
-                await status_msg.edit_text(f"❌ No se encontró el anime: <b>{anime_name}</b>",
-                                           parse_mode=enums.ParseMode.HTML)
+                await status_msg.edit_text(
+                    f"❌ No se encontró el anime: <b>{anime_name}</b>",
+                    parse_mode=enums.ParseMode.HTML
+                )
                 return
 
             anime = data['data']['Media']
@@ -266,7 +366,10 @@ def register(app, user_states, work_dir):
                 'FINISHED': 'Finalizado', 'RELEASING': 'En emisión',
                 'NOT_YET_RELEASED': 'Próximamente', 'CANCELLED': 'Cancelado', 'HIATUS': 'En pausa'
             }
-            TEMPORADAS = {'WINTER': 'Invierno', 'SPRING': 'Primavera', 'SUMMER': 'Verano', 'FALL': 'Otoño'}
+            TEMPORADAS = {
+                'WINTER': 'Invierno', 'SPRING': 'Primavera',
+                'SUMMER': 'Verano', 'FALL': 'Otoño'
+            }
             FORMATOS = {
                 'TV': 'Serie de TV', 'MOVIE': 'Película', 'SPECIAL': 'Especial',
                 'OVA': 'OVA', 'ONA': 'ONA', 'MUSIC': 'Musical', 'TV_SHORT': 'Serie Corta'
@@ -293,19 +396,19 @@ def register(app, user_states, work_dir):
             generos = (', '.join([GENEROS_TRAD.get(g, g) for g in anime['genres']])
                        if anime['genres'] else 'N/A')
 
-            # ── Sinopsis: preferir Anime-Planet ──
-            await status_msg.edit_text("⏳ Obteniendo sinopsis de Anime-Planet...")
-            sinopsis = _get_animeplanet_synopsis(titulo)
+            # Episodios y duración — evitar "None"
+            episodios = _fmt(anime.get('episodes'), fallback='En emisión')
+            duracion = _fmt(anime.get('duration'), suffix=' min', fallback='N/A')
 
-            if sinopsis:
-                logger.info("✅ Sinopsis obtenida de Anime-Planet")
-                sinopsis = _translate_to_spanish(sinopsis)
+            # ── Sinopsis: cascada multi-fuente ──
+            await status_msg.edit_text("⏳ Obteniendo sinopsis...")
+            anilist_desc = anime.get('description', '')
+            sinopsis_raw, sinopsis_fuente = _get_synopsis(titulo, anilist_desc)
+
+            if sinopsis_raw != 'No disponible':
+                sinopsis = _translate_to_spanish(sinopsis_raw)
             else:
-                logger.info("⚠️ Usando sinopsis de AniList como fallback")
-                sinopsis = anime.get('description', 'No disponible')
-                if sinopsis != 'No disponible':
-                    sinopsis = re.sub(r'<[^>]+>', '', sinopsis).strip()
-                    sinopsis = _translate_to_spanish(sinopsis)
+                sinopsis = 'No disponible'
 
             # ── Doblaje Latino ──
             await status_msg.edit_text("⏳ Verificando doblaje latino...")
@@ -314,12 +417,15 @@ def register(app, user_states, work_dir):
             if dub_fuente:
                 dub_linea += f" <i>({dub_fuente})</i>"
 
-            # ── Bloque de títulos alternativos ──
+            # ── Bloque títulos alternativos ──
             titulo_bloque = ""
             if titulo_ingles and titulo_ingles != titulo:
                 titulo_bloque += f"\n<b>🔤 Título inglés:</b> <b>{titulo_ingles}</b>"
             if titulo_nativo and titulo_nativo != titulo:
                 titulo_bloque += f"\n<b>🈯 Título nativo:</b> <b>{titulo_nativo}</b>"
+
+            # Etiqueta de fuente de sinopsis
+            fuente_tag = f" <i>(vía {sinopsis_fuente})</i>" if sinopsis_fuente else ""
 
             # ── Mensaje final ──
             info = (
@@ -327,15 +433,15 @@ def register(app, user_states, work_dir):
                 f"<b>🈺 Título:</b> <b>{titulo}</b>"
                 f"{titulo_bloque}\n"
                 f"<b>🏦 Estudio:</b> <b>{estudios}</b>\n"
-                f"<b>📆 Año:</b> <b>{anime.get('seasonYear', 'N/A')}</b>\n"
-                f"<b>🗂 Episodios:</b> <b>{anime.get('episodes', 'En emisión')}</b>\n"
+                f"<b>📆 Año:</b> <b>{_fmt(anime.get('seasonYear'))}</b>\n"
+                f"<b>🗂 Episodios:</b> <b>{episodios}</b>\n"
                 f"<b>🏷 Géneros:</b> <b>{generos}</b>\n"
-                f"<b>⏱ Duración:</b> <b>{anime.get('duration', 'N/A')} min</b>\n"
+                f"<b>⏱ Duración:</b> <b>{duracion}</b>\n"
                 f"<b>💽 Formato:</b> <b>{FORMATOS.get(anime.get('format'), anime.get('format', 'N/A'))}</b>\n"
                 f"<b>🔅 Temporada:</b> <b>{TEMPORADAS.get(anime.get('season'), 'N/A')}</b>\n"
                 f"<b>⏳ Estado:</b> <b>{ESTADOS.get(anime.get('status'), anime.get('status', 'N/A'))}</b>\n"
                 f"<b>🎙 Doblaje Latino:</b> {dub_linea}\n\n"
-                f"<b>📜 Sinopsis</b> <i>(vía Anime-Planet)</i><b>:</b>\n"
+                f"<b>📜 Sinopsis{fuente_tag}:</b>\n"
                 f"<blockquote><b>{sinopsis}</b></blockquote>"
             )
 
@@ -349,7 +455,6 @@ def register(app, user_states, work_dir):
                     ['curl', '-s', '-L', '--max-time', '30', image_url],
                     capture_output=True, timeout=35
                 )
-
                 if img_result.returncode == 0 and len(img_result.stdout) > 0:
                     temp_img = work_dir / f"anime_{message.from_user.id}.jpg"
                     temp_img.write_bytes(img_result.stdout)
@@ -368,7 +473,7 @@ def register(app, user_states, work_dir):
                     temp_img.unlink(missing_ok=True)
                     return
 
-            # Fallback sin imagen
+            # Sin imagen
             await status_msg.edit_text(info, parse_mode=enums.ParseMode.HTML)
 
         except Exception as e:
@@ -377,3 +482,4 @@ def register(app, user_states, work_dir):
                 f"❌ <b>Error</b>\n\n{str(e)[:100]}",
                 parse_mode=enums.ParseMode.HTML
             )
+
