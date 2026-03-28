@@ -180,6 +180,30 @@ def _check_spa_lat_dub(anime_title: str, mal_extra: dict) -> str:
     return '❓ Sin confirmar'
 
 
+# ── Utilidad de división de texto ────────────────────────────────────────────
+
+def _split_text(text: str, limit: int = 4096) -> list:
+    """
+    Divide un texto largo en partes que no superen `limit` caracteres.
+    Intenta cortar en saltos de línea para no partir frases a la mitad.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    partes = []
+    while text:
+        if len(text) <= limit:
+            partes.append(text)
+            break
+        # Buscar el último salto de línea antes del límite
+        corte = text.rfind('\n', 0, limit)
+        if corte == -1:
+            corte = limit   # No hay salto — cortar en duro
+        partes.append(text[:corte].rstrip())
+        text = text[corte:].lstrip()
+    return partes
+
+
 # ── Handler principal ──────────────────────────────────────────────────────────
 
 def register(app, user_states, work_dir):
@@ -330,6 +354,12 @@ def register(app, user_states, work_dir):
                          anime.get('bannerImage') or
                          anime['coverImage'].get('large'))
 
+            await status_msg.edit_text("⏳ Preparando respuesta…")
+
+            # Límites de Telegram
+            CAPTION_LIMIT = 1024
+            TEXT_LIMIT     = 4096
+
             if image_url:
                 img_raw = await asyncio.to_thread(
                     lambda: subprocess.run(
@@ -340,17 +370,32 @@ def register(app, user_states, work_dir):
                 if img_raw:
                     temp_img = work_dir / f"anime_{message.from_user.id}.jpg"
                     temp_img.write_bytes(img_raw)
-                    await message.reply_photo(
-                        photo=str(temp_img),
-                        caption=info,
-                        parse_mode=enums.ParseMode.HTML
-                    )
-                    await status_msg.delete()
+
+                    if len(info) <= CAPTION_LIMIT:
+                        # Cabe todo en el caption de la foto
+                        await message.reply_photo(
+                            photo=str(temp_img),
+                            caption=info,
+                            parse_mode=enums.ParseMode.HTML
+                        )
+                    else:
+                        # No cabe — foto + texto separado (puede ser 2 mensajes)
+                        await message.reply_photo(photo=str(temp_img))
+                        # Dividir texto si supera 4096
+                        partes = _split_text(info, TEXT_LIMIT)
+                        for parte in partes:
+                            await message.reply_text(parte, parse_mode=enums.ParseMode.HTML)
+
                     temp_img.unlink(missing_ok=True)
+                    await status_msg.delete()
                     logger.info(f"✅ Anime enviado con imagen: {titulo}")
                     return
 
-            await status_msg.edit_text(info, parse_mode=enums.ParseMode.HTML)
+            # Sin imagen — texto (dividido si hace falta)
+            partes = _split_text(info, TEXT_LIMIT)
+            await status_msg.edit_text(partes[0], parse_mode=enums.ParseMode.HTML)
+            for parte in partes[1:]:
+                await message.reply_text(parte, parse_mode=enums.ParseMode.HTML)
             logger.info(f"✅ Anime enviado (sin imagen): {titulo}")
 
         except Exception as e:
