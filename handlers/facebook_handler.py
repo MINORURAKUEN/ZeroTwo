@@ -151,13 +151,18 @@ def register(app, download_dir):
                     logger.info(f"📤 Subida: {percent}% ({mb_current:.1f}/{mb_total:.1f} MB)")
                     last_percent[0] = percent
             
+            tmp_fb_thumb = download_dir / f"fb_{message.from_user.id}_thumb.jpg"
+            fb_dur, fb_thumb = VideoProcessor.get_video_meta(output_file, tmp_fb_thumb)
             await message.reply_video(
                 video=str(output_file),
                 caption=caption,
                 parse_mode=enums.ParseMode.HTML,
                 supports_streaming=True,
-                progress=upload_progress
+                progress=upload_progress,
+                duration=fb_dur,
+                thumb=fb_thumb,
             )
+            tmp_fb_thumb.unlink(missing_ok=True)
             
             # Limpiar archivo temporal
             output_file.unlink()
