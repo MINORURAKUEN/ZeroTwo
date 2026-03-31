@@ -423,12 +423,12 @@ def register(app, user_states, work_dir):
                 f"<b>🏦 Estudio:</b> <b>{estudios}</b>\n"
                 f"<b>📆 Año:</b> <b>{anio}</b>\n"
                 f"<b>🗂 Episodios:</b> <b>{episodios}</b>\n"
+                f"<b>🎙 Doblaje latino:</b> <b>{doblaje_txt}</b>\n\n"
                 f"<b>🏷 Géneros:</b> <b>{generos}</b>\n"
                 f"<b>⏱ Duración:</b> <b>{duracion_txt}</b>\n"
                 f"<b>💽 Formato:</b> <b>{formato}</b>\n"
                 f"<b>🔅 Temporada:</b> <b>{temporada}</b>\n"
                 f"<b>⏳ Estado:</b> <b>{estado}</b>\n"
-                f"<b>🎙 Doblaje latino:</b> <b>{doblaje_txt}</b>\n\n"
                 f"<b>📜 Sinopsis:</b>\n"
                 f"<blockquote><b>{sinopsis}</b></blockquote>"
             )
