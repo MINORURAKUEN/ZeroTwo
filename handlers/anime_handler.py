@@ -1,6 +1,7 @@
 """
 anime_handler.py - Manejador del comando /anime
 Fuentes: AniList (principal) → MyAnimeList/Jikan (fallback)
+Imagen: cascada multi-fuente con verificación de tamaño (≥500KB preferido)
 Doblaje: Crunchyroll Latinoamérica (temporada Primavera 2026 + historial)
 """
 
@@ -133,13 +134,15 @@ CRUNCHYROLL_DUBS = {
     "welcome to demon school! iruma-kun season 3": True,
 }
 
+# Tamaño mínimo aceptable para imagen (500 KB)
+MIN_IMAGE_SIZE = 500 * 1024
+
 
 def _tiene_doblaje(titulo_romaji: str, titulo_english: str, titulo_native: str) -> bool:
     """Verifica si el anime tiene doblaje latino en Crunchyroll."""
     for titulo in [titulo_romaji, titulo_english, titulo_native]:
         if titulo and titulo.lower().strip() in CRUNCHYROLL_DUBS:
             return True
-        # Búsqueda parcial para variantes de título
         if titulo:
             titulo_lower = titulo.lower().strip()
             for key in CRUNCHYROLL_DUBS:
@@ -185,6 +188,208 @@ def _curl_get(url: str, timeout: int = 15) -> dict | None:
     except Exception as e:
         logger.error(f"curl GET error: {e}")
         return None
+
+
+def _get_content_length(url: str, timeout: int = 10) -> int:
+    """
+    Hace HEAD request para obtener Content-Length sin descargar la imagen.
+    Retorna el tamaño en bytes, o 0 si no se puede determinar.
+    """
+    try:
+        cmd = [
+            'curl', '-s', '-I', '-L', url,
+            '-H', 'User-Agent: Mozilla/5.0',
+            '--max-time', str(timeout)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 2)
+        if result.returncode != 0:
+            return 0
+        for line in result.stdout.splitlines():
+            if line.lower().startswith('content-length:'):
+                return int(line.split(':', 1)[1].strip())
+    except Exception:
+        pass
+    return 0
+
+
+def _descargar_imagen(url: str, timeout: int = 30) -> bytes | None:
+    """Descarga imagen y retorna bytes, o None si falla."""
+    try:
+        result = subprocess.run(
+            ['curl', '-s', '-L', url,
+             '-H', 'User-Agent: Mozilla/5.0',
+             '--max-time', str(timeout)],
+            capture_output=True, timeout=timeout + 5
+        )
+        if result.returncode == 0 and len(result.stdout) > 0:
+            return result.stdout
+    except Exception as e:
+        logger.warning(f"Error descargando imagen {url}: {e}")
+    return None
+
+
+def _buscar_imagen_kitsu(titulo_romaji: str, titulo_english: str) -> list[str]:
+    """
+    Busca en Kitsu API y retorna lista de URLs de imagen en orden de calidad:
+    original → large → small
+    """
+    urls = []
+    import urllib.parse
+
+    for query in [titulo_english, titulo_romaji]:
+        if not query:
+            continue
+        q = urllib.parse.quote(query)
+        data = _curl_get(f'https://kitsu.io/api/edge/anime?filter[text]={q}&page[limit]=1')
+        if not data:
+            continue
+        items = data.get('data', [])
+        if not items:
+            continue
+        attrs = items[0].get('attributes', {})
+        poster = attrs.get('posterImage') or {}
+        # original > large > medium > small
+        for key in ('original', 'large', 'medium', 'small'):
+            url = poster.get(key)
+            if url and url not in urls:
+                urls.append(url)
+        if urls:
+            break
+
+    return urls
+
+
+def _buscar_imagen_mal(titulo: str) -> list[str]:
+    """
+    Busca en Jikan/MAL y retorna URLs de imagen.
+    large_image_url > image_url
+    """
+    import urllib.parse
+    urls = []
+    q = urllib.parse.quote(titulo)
+    data = _curl_get(f'https://api.jikan.moe/v4/anime?q={q}&limit=1')
+    if not data or not data.get('data'):
+        return urls
+    item = data['data'][0]
+    images = item.get('images', {})
+    for fmt in ('jpg', 'webp'):
+        img = images.get(fmt, {})
+        for key in ('large_image_url', 'image_url'):
+            url = img.get(key)
+            if url and url not in urls:
+                urls.append(url)
+    return urls
+
+
+def _buscar_imagen_anidb(titulo: str) -> list[str]:
+    """
+    Busca poster en AniDB via la API XML pública (sin auth, solo búsqueda).
+    Construye URL directa del poster si encuentra el AID.
+    """
+    import urllib.parse
+    urls = []
+    try:
+        q = urllib.parse.quote(titulo)
+        # AniDB HTTP API (solo lectura, no requiere auth para búsqueda básica)
+        cmd = [
+            'curl', '-s', '-L',
+            f'https://anisearch.com/anime/index/search.xml?q={q}&limit=1',
+            '-H', 'User-Agent: Mozilla/5.0',
+            '--max-time', '10'
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
+        # AniDB bloquea scraping fácilmente, intentamos con su CDN directo si tenemos AID
+        # Esta fuente es solo de oportunidad
+    except Exception:
+        pass
+    return urls
+
+
+def _obtener_mejor_imagen(
+    anilist_urls: list[str],
+    titulo_romaji: str,
+    titulo_english: str,
+    min_size: int = MIN_IMAGE_SIZE
+) -> bytes | None:
+    """
+    Busca la imagen de mayor calidad posible usando cascada multi-fuente.
+
+    Orden de preferencia:
+    1. Kitsu (original/large — frecuentemente 4K o alta resolución)
+    2. AniList extraLarge / bannerImage
+    3. MyAnimeList large_image_url
+    4. Cualquier URL restante de AniList
+
+    Para cada URL:
+    - Verifica Content-Length con HEAD request
+    - Si ≥ min_size → descarga directamente (candidato bueno)
+    - Si < min_size o desconocido → descarga pero guarda como fallback
+    - Retorna la imagen más pesada encontrada (priorizando ≥ min_size)
+    """
+    # ── Construir lista ordenada de candidatos ───────────────────────────
+    candidates: list[str] = []
+
+    # 1. Kitsu (mejor calidad potencial)
+    kitsu_urls = _buscar_imagen_kitsu(titulo_romaji, titulo_english)
+    candidates.extend(kitsu_urls)
+
+    # 2. AniList URLs recibidas
+    candidates.extend([u for u in anilist_urls if u and u not in candidates])
+
+    # 3. MAL como último recurso externo
+    mal_urls = _buscar_imagen_mal(titulo_english or titulo_romaji)
+    candidates.extend([u for u in mal_urls if u and u not in candidates])
+
+    if not candidates:
+        return None
+
+    best_data: bytes | None = None
+    best_size: int = 0
+
+    logger.info(f"🖼 Buscando imagen de alta calidad — {len(candidates)} candidatos")
+
+    for url in candidates:
+        try:
+            # HEAD para verificar tamaño antes de descargar
+            content_length = _get_content_length(url)
+            logger.info(f"  → {url[:80]}... | HEAD size: {content_length // 1024} KB")
+
+            if content_length >= min_size:
+                # Candidato bueno: descargar y retornar inmediatamente
+                data = _descargar_imagen(url)
+                if data and len(data) >= min_size:
+                    logger.info(f"  ✅ Imagen de calidad: {len(data) // 1024} KB")
+                    return data
+                elif data and len(data) > best_size:
+                    best_data = data
+                    best_size = len(data)
+
+            elif content_length > 0:
+                # Tamaño conocido pero menor al mínimo — guardar como fallback
+                if content_length > best_size:
+                    data = _descargar_imagen(url)
+                    if data and len(data) > best_size:
+                        best_data = data
+                        best_size = len(data)
+
+            else:
+                # Content-Length desconocido → descargar y evaluar
+                data = _descargar_imagen(url)
+                if data:
+                    if len(data) >= min_size:
+                        logger.info(f"  ✅ Imagen de calidad (sin HEAD): {len(data) // 1024} KB")
+                        return data
+                    elif len(data) > best_size:
+                        best_data = data
+                        best_size = len(data)
+
+        except Exception as e:
+            logger.warning(f"  ⚠ Error con {url}: {e}")
+            continue
+
+    if best_data:
+        logger.info(f"  📦 Usando mejor disponible: {best_size // 1024} KB")
+    return best_data
 
 
 def _buscar_anilist(anime_name: str) -> dict | None:
@@ -234,7 +439,6 @@ def _buscar_mal(anime_name: str) -> dict | None:
 
     mal = data['data'][0]
 
-    # Normalizar al formato que usa el resto del código
     return {
         '_source': 'mal',
         'title': {
@@ -248,7 +452,7 @@ def _buscar_mal(anime_name: str) -> dict | None:
         'seasonYear': mal.get('aired', {}).get('prop', {}).get('from', {}).get('year'),
         'episodes': mal.get('episodes'),
         'genres': [g['name'] for g in mal.get('genres', [])],
-        'duration': None,          # MAL da string, lo ignoramos
+        'duration': None,
         'format': _mal_type(mal.get('type')),
         'season': None,
         'status': _mal_status(mal.get('status')),
@@ -320,7 +524,6 @@ def register(app, user_states, work_dir):
         'Romance': 'Romance', 'Sci-Fi': 'Ciencia Ficción',
         'Slice of Life': 'Recuentos de la vida', 'Sports': 'Deportes',
         'Supernatural': 'Sobrenatural', 'Thriller': 'Suspenso',
-        # Géneros extra de MAL
         'Shounen': 'Shōnen', 'Shoujo': 'Shōjo', 'Seinen': 'Seinen',
         'Josei': 'Josei', 'Isekai': 'Isekai', 'Harem': 'Harem',
         'School': 'Escolar', 'Magic': 'Magia', 'Super Power': 'Superpoderes',
@@ -433,35 +636,45 @@ def register(app, user_states, work_dir):
                 f"<blockquote><b>{sinopsis}</b></blockquote>"
             )
 
-            # ── 6. Imagen de portada ──────────────────────────────────────
+            # ── 6. Imagen de alta calidad — cascada multi-fuente ──────────
+            await status_msg.edit_text("⏳ Buscando imagen en alta calidad...")
+
             cover = anime.get('coverImage') or {}
-            image_url = (
-                cover.get('extraLarge')
-                or anime.get('bannerImage')
-                or cover.get('large')
+
+            # Lista de URLs de AniList en orden de calidad
+            anilist_urls = [
+                u for u in [
+                    cover.get('extraLarge'),
+                    anime.get('bannerImage'),
+                    cover.get('large'),
+                    cover.get('medium'),
+                ] if u
+            ]
+
+            # Buscar mejor imagen disponible (≥500KB preferido)
+            img_data = _obtener_mejor_imagen(
+                anilist_urls=anilist_urls,
+                titulo_romaji=titulo,
+                titulo_english=titulo_ingles,
+                min_size=MIN_IMAGE_SIZE
             )
 
-            if image_url:
-                img_result = subprocess.run(
-                    ['curl', '-s', '-L', image_url],
-                    capture_output=True, timeout=30
-                )
-                if img_result.returncode == 0 and len(img_result.stdout) > 0:
-                    temp_img = work_dir / f"anime_{message.from_user.id}.jpg"
-                    temp_img.write_bytes(img_result.stdout)
+            if img_data:
+                temp_img = work_dir / f"anime_{message.from_user.id}.jpg"
+                temp_img.write_bytes(img_data)
 
-                    if len(info) > 1024:
-                        await message.reply_photo(photo=str(temp_img))
-                        await message.reply_text(info, parse_mode=enums.ParseMode.HTML)
-                    else:
-                        await message.reply_photo(
-                            photo=str(temp_img),
-                            caption=info,
-                            parse_mode=enums.ParseMode.HTML
-                        )
-                    await status_msg.delete()
-                    temp_img.unlink(missing_ok=True)
-                    return
+                if len(info) > 1024:
+                    await message.reply_photo(photo=str(temp_img))
+                    await message.reply_text(info, parse_mode=enums.ParseMode.HTML)
+                else:
+                    await message.reply_photo(
+                        photo=str(temp_img),
+                        caption=info,
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                await status_msg.delete()
+                temp_img.unlink(missing_ok=True)
+                return
 
             # Sin imagen → solo texto
             await status_msg.edit_text(info, parse_mode=enums.ParseMode.HTML)
@@ -471,5 +684,5 @@ def register(app, user_states, work_dir):
             await status_msg.edit_text(
                 f"❌ <b>Error interno</b>\n\n<code>{str(e)[:200]}</code>",
                 parse_mode=enums.ParseMode.HTML
-        )
-    
+            )
+
