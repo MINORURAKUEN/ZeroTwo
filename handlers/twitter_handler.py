@@ -114,25 +114,59 @@ def register(app, download_dir):
                     
                     tmp_video = download_dir / f"tw_{message.from_user.id}.mp4"
                     
+                    tmp_thumb = download_dir / f"tw_{message.from_user.id}_thumb.jpg"
                     try:
                         # Descargar video
                         dl_cmd = f'curl -s -L -o "{tmp_video}" "{video_url}"'
                         subprocess.run(dl_cmd, shell=True, timeout=120)
-                        
+
                         if not tmp_video.exists():
                             raise Exception("Error descargando video")
-                        
+
+                        # Obtener duración con ffprobe
+                        duration = 0
+                        try:
+                            probe = subprocess.run(
+                                ['ffprobe', '-v', 'error',
+                                 '-show_entries', 'format=duration',
+                                 '-of', 'default=noprint_wrappers=1:nokey=1',
+                                 str(tmp_video)],
+                                capture_output=True, text=True, timeout=10
+                            )
+                            duration = int(float(probe.stdout.strip()))
+                        except Exception:
+                            pass
+
+                        # Extraer miniatura del frame central
+                        thumb_path = None
+                        try:
+                            mid = max(1, duration // 2)
+                            subprocess.run(
+                                ['ffmpeg', '-y', '-ss', str(mid),
+                                 '-i', str(tmp_video),
+                                 '-vframes', '1', '-q:v', '2',
+                                 str(tmp_thumb)],
+                                capture_output=True, timeout=15
+                            )
+                            if tmp_thumb.exists():
+                                thumb_path = str(tmp_thumb)
+                        except Exception:
+                            pass
+
                         await message.reply_video(
                             video=str(tmp_video),
                             caption=caption,
                             parse_mode=enums.ParseMode.HTML,
-                            supports_streaming=True
+                            supports_streaming=True,
+                            duration=duration,
+                            thumb=thumb_path,
                         )
-                        
+
                         logger.info("✅ Video enviado")
-                        
+
                     finally:
                         tmp_video.unlink(missing_ok=True)
+                        tmp_thumb.unlink(missing_ok=True)
                 
                 await status_msg.delete()
                 logger.info("✅ Video de Twitter enviado exitosamente")
