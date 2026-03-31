@@ -393,6 +393,43 @@ class VideoProcessor:
 
     # ─── Extracción de audio ──────────────────────────────────────────────────
 
+
+    @staticmethod
+    def get_video_meta(video_path, thumb_path):
+        """Extrae duracion (int segundos) y miniatura del frame central.
+        thumb_path: ruta donde guardar el jpg.
+        Retorna (duration, thumb_path_str_or_None).
+        """
+        duration = 0
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error",
+                 "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1",
+                 str(video_path)],
+                capture_output=True, text=True, timeout=10
+            )
+            duration = int(float(probe.stdout.strip()))
+        except Exception:
+            pass
+
+        thumb = None
+        try:
+            mid = max(1, duration // 2)
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", str(mid),
+                 "-i", str(video_path),
+                 "-vframes", "1", "-q:v", "2",
+                 str(thumb_path)],
+                capture_output=True, timeout=15
+            )
+            if Path(thumb_path).exists():
+                thumb = str(thumb_path)
+        except Exception:
+            pass
+
+        return duration, thumb
+
     @staticmethod
     def extract_audio(video_path, output_path):
         """Extrae el audio de un video en MP3 a 192 kbps."""
