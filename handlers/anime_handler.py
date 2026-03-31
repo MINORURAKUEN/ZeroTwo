@@ -498,7 +498,7 @@ def register(app, user_states, work_dir):
                 f"<b>{src_emoji} Fuente:</b> <b>{src_label}</b>\n"
                 f"<b>📅 Estreno:</b> <b>{estreno_txt}</b>\n"
                 f"<b>🗂 Episodios:</b> <b>{episodios}</b>\n"
-                f"<b>🎙 Doblaje latino:</b> <b>{doblaje_txt}</b>\n\n"
+                f"<b>🎙 Doblaje latino:</b> <b>{doblaje_txt}</b>\n"
                 f"<b>🏷 Géneros:</b> <b>{generos}</b>\n"
                 f"<b>⏱ Duración:</b> <b>{duracion_txt}</b>\n"
                 f"<b>💽 Formato:</b> <b>{formato}</b>\n"
